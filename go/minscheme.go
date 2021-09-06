@@ -195,7 +195,6 @@ func (e *Env) pushed(symbol string, value *Value) *Env {
 }
 
 func (e *Env) eval(v *Value) (*Env, *Value) {
-	// fmt.Printf("%v\n", v)
 	switch v.kind {
 	case KindNone:
 		return e, v
