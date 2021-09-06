@@ -15,7 +15,7 @@ func main() {
 	code = string(b)
 
 	v := value()
-	(&Env{}).eval(v)
+	newEnv().eval(v)
 }
 
 var code string
@@ -39,8 +39,35 @@ type Value struct {
 	symbol   string
 	boolVal  bool
 	intVal   int
-	function func(v *Value) *Value
+	function func(e *Env, v *Value) *Value
 	quoted   *Value
+}
+
+func (v *Value) asBool() bool {
+	switch v.kind {
+	case KindBool:
+		return v.boolVal
+	}
+	return true
+}
+
+func (v *Value) eq(u *Value) bool {
+	if v.kind != u.kind {
+		return false
+	}
+	switch v.kind {
+	case KindNone:
+		return true
+	case KindBool:
+		return v.boolVal == u.boolVal
+	case KindInt:
+		return v.intVal == u.intVal
+	case KindQuote:
+		return v.quoted.eq(u.quoted)
+	case KindSymbol:
+		return v.symbol == u.symbol
+	}
+	return false
 }
 
 func next() byte {
@@ -131,6 +158,27 @@ func value() *Value {
 }
 
 type Env struct {
+	symbol string
+	value  *Value
+	next   *Env
+}
+
+func (e *Env) lookup(s string) *Value {
+	if e == nil {
+		return &Value{kind: KindNone}
+	}
+	if e.symbol == s {
+		return e.value
+	}
+	return e.next.lookup(s)
+}
+
+func (e *Env) pushed(symbol string, value *Value) *Env {
+	return &Env{
+		symbol: symbol,
+		value:  value,
+		next:   e,
+	}
 }
 
 func (e *Env) eval(v *Value) *Value {
@@ -144,30 +192,9 @@ func (e *Env) eval(v *Value) *Value {
 	case KindQuote:
 		return v.quoted
 	case KindPair:
-		return e.eval(v.first).function(v.second)
+		return e.eval(v.first).function(e, v.second)
 	case KindSymbol:
-		if v.symbol == "print" {
-			return &Value{
-				kind: KindFunc,
-				function: func(v *Value) *Value {
-					fmt.Printf("%s\n", e.eval(v.first))
-					return &Value{kind: KindNone}
-				},
-			}
-		}
-		if v.symbol == "begin" {
-			return &Value{
-				kind: KindFunc,
-				function: func(v *Value) *Value {
-					res := &Value{kind: KindNone}
-					for v.kind != KindNone {
-						res = e.eval(v.first)
-						v = v.second
-					}
-					return res
-				},
-			}
-		}
+		return e.lookup(v.symbol)
 	}
 	panic(v.symbol)
 }
@@ -189,4 +216,158 @@ func (v *Value) String() string {
 	default:
 		panic("BUG")
 	}
+}
+
+func newEnv() *Env {
+	var env *Env
+	return env.pushed("-", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:   KindInt,
+				intVal: e.eval(v.first).intVal - e.eval(v.second.first).intVal,
+			}
+		},
+	}).pushed("+", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:   KindInt,
+				intVal: e.eval(v.first).intVal + e.eval(v.second.first).intVal,
+			}
+		},
+	}).pushed("*", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:   KindInt,
+				intVal: e.eval(v.first).intVal * e.eval(v.second.first).intVal,
+			}
+		},
+	}).pushed("/", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:   KindInt,
+				intVal: e.eval(v.first).intVal / e.eval(v.second.first).intVal,
+			}
+		},
+	}).pushed("=", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:    KindBool,
+				boolVal: e.eval(v.first).intVal == e.eval(v.second.first).intVal,
+			}
+		},
+	}).pushed("<", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:    KindBool,
+				boolVal: e.eval(v.first).intVal < e.eval(v.second.first).intVal,
+			}
+		},
+	}).pushed("<=", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:    KindBool,
+				boolVal: e.eval(v.first).intVal <= e.eval(v.second.first).intVal,
+			}
+		},
+	}).pushed(">", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:    KindBool,
+				boolVal: e.eval(v.first).intVal > e.eval(v.second.first).intVal,
+			}
+		},
+	}).pushed(">=", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:    KindBool,
+				boolVal: e.eval(v.first).intVal >= e.eval(v.second.first).intVal,
+			}
+		},
+	}).pushed("and", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			res := true
+			for v.kind != KindNone {
+				res = res && e.eval(v.first).asBool()
+				v = v.second
+			}
+			return &Value{
+				kind:    KindBool,
+				boolVal: res,
+			}
+		},
+	}).pushed("or", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			res := false
+			for v.kind != KindNone {
+				res = res || e.eval(v.first).asBool()
+				v = v.second
+			}
+			return &Value{
+				kind:    KindBool,
+				boolVal: res,
+			}
+		},
+	}).pushed("print", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			fmt.Printf("%s\n", e.eval(v.first))
+			return &Value{kind: KindNone}
+		},
+	}).pushed("begin", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			res := &Value{kind: KindNone}
+			for v.kind != KindNone {
+				res = e.eval(v.first)
+				v = v.second
+			}
+			return res
+		},
+	}).pushed("not", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:    KindBool,
+				boolVal: !e.eval(v.first).boolVal,
+			}
+		},
+	}).pushed("car", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return e.eval(v.first).first
+		},
+	}).pushed("cdr", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return e.eval(v.first).second
+		},
+	}).pushed("cons", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:   KindPair,
+				first:  e.eval(v.first),
+				second: e.eval(v.second.first),
+			}
+		},
+	}).pushed("eq?", &Value{
+		kind: KindFunc,
+		function: func(e *Env, v *Value) *Value {
+			return &Value{
+				kind:    KindBool,
+				boolVal: e.eval(v.first).eq(e.eval(v.second.first)),
+			}
+		},
+	})
 }
