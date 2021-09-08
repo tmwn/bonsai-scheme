@@ -1,0 +1,283 @@
+#!/bin/bash
+
+: <<'COMMENT'
+# Data structure
+
+Arenas are used to store data in referenceable form.
+
+Value arena is one dimentional array in the following form.
+
+( type1 x1 y1 type2 x2 y2 ... )
+
+Each three consecutive data represents one value. Any value appears in the
+program is stored in the arena and always referenced by its index in the
+value arena. 0 represents the first data, 3 does the second data, and so on.
+A type is one of the following: nil, bool, int, pair, symbol, func, quote .
+A value of each type has the following form.
+
+- nil "" ""
+- bool t ""
+- int 100 ""
+- pair 6 9
+- symbol print ""
+- func <func> ""
+- quote 3 ""
+
+<func> is a stringified bash script. It assumes two inputs $env and $val and
+returns the resulting environment and value.
+
+Env arena is one dimentional array in the following form. Any environment
+appears in the program are referenced by its index in the env arena.
+
+( next1 name1 value1 next2 name2 value2 ... )
+
+name is a symbol string. next and value are pointers to the next item in the
+linked list and the value for the symbol.
+
+# Stack
+
+Because bash has dynamic scope, writing on the same name variable in nested
+function call would override previously defined value. To mitigate the issue,
+a stack can be used. stacknew is an idempotent function which returns a handler
+for operating a stack. Example:
+  fact () {
+      if [[ $1 -eq 0 ]]; then
+          factret=1
+          return
+      fi
+      stackpush n $1
+      fact $(( $1 - 1 ))
+      stackpop n
+      factret=$(( $factret * $popret ))
+  }
+COMMENT
+
+declare r1 r2 r3          # general return values
+declare kind first second # valdestruct return values
+declare popret            # stackpop return value
+declare env val           # func input values
+
+declare code="$(cat $1))"
+
+next () {
+    peek
+    code="${code:1}"
+}
+peek () {
+    r1="${code:0:1}"
+}
+skip () {
+    [[ -z "$code" ]] && return
+    peek
+    if [[ "$r1" == " " ]] || [[ "$r1" == "\n" ]]; then
+        next
+        skip
+    fi
+}
+token () {
+    skip
+    next
+    case "$r1" in
+        "(" | ")" | "'")
+            return ;;
+        "#")
+            next
+            r1="#${r1}"
+            return ;;
+    esac
+    local s="${r1}"
+    peek
+    while [[ "$r1" != ")" ]] && [[ "$r1" != " " ]] && [[ "$r1" != "\n" ]]; do
+        s="${s}${r1}"
+        next
+        peek
+    done
+    r1="${s}"
+}
+VALARENA=("nil" "" "")
+VALNIL=0
+valalloc () {
+    r1="${#VALARENA[*]}"
+    VALARENA[$r1]="$1"
+    VALARENA[$(( $r1 + 1 ))]="$2"
+    VALARENA[$(( $r1 + 2 ))]="$3"
+}
+valdestruct () {
+    kind="${VALARENA[$(( $1 + 0 ))]}"
+    first="${VALARENA[$(( $1 + 1 ))]}"
+    second="${VALARENA[$(( $1 + 2 ))]}"
+}
+valshow () {
+    valdestruct "$1"
+    case "$kind" in
+        "nil")
+            echo -n nil;;
+        "bool")
+            echo -n "#${first}";;
+        "int")
+            echo -n "${first}";;
+        "pair")
+            echo -n "( "
+            local snd2="${second}"
+            valshow "$first"
+            echo -n " . "
+            valshow "${snd2}"
+            echo -n " )";;
+        "quote")
+            echo -n "'"
+            valshow "$first" ;;
+        "symbol")
+            echo -n "$first";;
+    esac
+}
+list () {
+    skip
+    peek
+    if [[ "$r1" == ")" ]]; then
+        next
+        r1="${VALNIL}"
+        return
+    fi
+    value
+    local v="$r1"
+    list
+    local l="$r1"
+    valalloc pair "$v" "$l"
+}
+value () {
+    token
+    case "${r1:0:1}" in
+        "(")
+            list
+            return ;;
+        "#")
+            valalloc "bool" "${r1:1}"
+            return ;;
+        "'")
+            value
+            valalloc "quote" "$r1"
+            return ;;
+    esac
+    if [[ "$r1" =~ ^-?[0-9]+$ ]]; then
+        valalloc "int" "$r1"
+        return
+    fi
+    valalloc "symbol" "$r1"
+}
+ENVNIL="-1"
+ENVARENA=()
+envalloc () {
+    r1="${#ENVARENA[*]}"
+    ENVARENA[$r1]="$1"
+    ENVARENA[$(( $r1 + 1 ))]="$2"
+    ENVARENA[$(( $r1 + 2 ))]="$3"
+}
+envnext () {
+    local e="$1"
+    r1="${ENVARENA[$e]}"
+}
+envsymbol () {
+    local e="$1"
+    r1="${ENVARENA[$(( $e + 1 ))]}"
+}
+envvalue () {
+    local e="$1"
+    r1="${ENVARENA[$(( $e + 2 ))]}"
+}
+lookup () {
+    local e="$1"
+    local s="$2"
+    envsymbol "$e"
+    if [[ "$r1" == "$s" ]]; then
+        envvalue "$e"
+        return
+    fi
+    envnext
+    lookup "$r1" "$s"
+}
+pushed () {
+    local e="$1"
+    local s="$2"
+    local v="$3"
+    envalloc "$e" "$s" "$v"
+}
+stackpush () {
+    local name="stack${1}"
+    local val="$2"
+
+    eval "
+    [[ -z \"\$$name\" ]] && $name=()
+    $name[\${#$name[@]}]='$val'
+    "
+}
+stackpop () {
+    local name="stack${1}"
+
+    eval "local len=\${#${name}[@]}"
+    local i=$(( $len - 1 ))
+
+    eval "popret=\${$name[$i]}"
+    unset $name[$i]
+}
+evaluate () {
+    local evalenv="$1"
+    valdestruct "$2"
+    case "$kind" in
+        "nil" | "bool" | "int")
+            r1="$evalenv"
+            r2="$2" ;;
+        "quote")
+            valalloc "quote" "$first"
+            r2="$r1"
+            r1="$evalenv" ;;
+        "pair")
+            stackpush "val" "${second}"
+            evaluate "$evalenv" "$first"
+            valdestruct "$r2"
+            local fun="$first"
+            env="$r1"
+            stackpop "val"
+            val="$popret"
+            eval "$fun" ;;
+        "symbol")
+            lookup "$evalenv" "$first"
+            r2="$r1"
+            r1="$evalenv" ;;
+    esac
+}
+evaluatelist () {
+    local e="$1"
+    local v="$2"
+    r1=${VALNIL}
+    local res="$r1"
+    valdestruct "$v"
+    while [[ "$kind" != "nil" ]]; do
+        local sec="${second}"
+        evaluate "$e" "${first}"
+        e="${r1}"
+        res="${r2}"
+        v="${sec}"
+        valdestruct "$v"
+    done
+    r1="${res}"
+}
+newenv () {
+    valalloc "func" '
+    valdestruct $val
+    evaluate $env $first
+    valshow $r2
+    echo
+    r1=-1
+    r2=-1
+'
+    pushed ENVNIL "print" "$r1"
+}
+
+main () {
+    newenv
+    local e="${r1}"
+    list
+    evaluatelist "$e" "$r1"
+}
+
+main
