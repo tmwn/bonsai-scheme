@@ -194,7 +194,7 @@ func (e *Env) eval(v *Value) (*Env, *Value) {
 	case KindQuote:
 		return e, v.quoted
 	case KindPair:
-		e, u := e.eval(v.first)
+		_, u := e.eval(v.first)
 		return u.function(e, v.second)
 	case KindSymbol:
 		return e, e.lookup(v.symbol)
@@ -359,18 +359,13 @@ func newEnv() *Env {
 		kind: KindFunc,
 		function: func(e *Env, v *Value) (*Env, *Value) {
 			_, u := e.eval(v.first)
-			fmt.Printf("%s\n", u)
+			fmt.Println(u)
 			return e, &Value{kind: KindNone}
 		},
 	}).pushed("begin", &Value{
 		kind: KindFunc,
 		function: func(e *Env, v *Value) (*Env, *Value) {
-			res := &Value{kind: KindNone}
-			for v.kind != KindNone {
-				_, res = e.eval(v.first)
-				v = v.second
-			}
-			return e, res
+			return e, e.evalList(v)
 		},
 	}).pushed("not", &Value{
 		kind: KindFunc,
@@ -520,9 +515,11 @@ func newEnv() *Env {
 
 			_, b := e.eval(cond)
 			if b.boolVal {
-				return e.eval(th)
+				_, v = e.eval(th)
+				return e, v
 			} else {
-				return e.eval(el)
+				_, v = e.eval(el)
+				return e, v
 			}
 		},
 	}).pushed("cond", &Value{
@@ -531,7 +528,8 @@ func newEnv() *Env {
 			for v.kind != KindNone {
 				kv := v.first
 				if _, b := e.eval(kv.first); b.boolVal {
-					return e.eval(kv.second.first)
+					_, v = e.eval(kv.second.first)
+					return e, v
 				}
 				v = v.second
 			}
