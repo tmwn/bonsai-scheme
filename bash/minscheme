@@ -33,23 +33,6 @@ appears in the program are referenced by its index in the env arena.
 
 name is a symbol string. next and value are pointers to the next item in the
 linked list and the value for the symbol.
-
-# Stack
-
-Because bash has dynamic scope, writing on the same name variable in nested
-function call would override previously defined value. To mitigate the issue,
-a stack can be used. stacknew is an idempotent function which returns a handler
-for operating a stack. Example:
-  fact () {
-      if [[ $1 -eq 0 ]]; then
-          factret=1
-          return
-      fi
-      stackpush n $1
-      fact $(( $1 - 1 ))
-      stackpop n
-      factret=$(( $factret * $popret ))
-  }
 COMMENT
 
 declare r1 r2 r3          # general return values
@@ -185,8 +168,7 @@ envvalue () {
     r1="${ENVARENA[$(( $e + 2 ))]}"
 }
 lookup () {
-    local e="$1"
-    local s="$2"
+    local e="$1" s="$2"
     [[ $e == -1 ]] && die "not found: '$s'"
 
     envsymbol "$e"
@@ -196,30 +178,6 @@ lookup () {
     fi
     envnext "$e"
     lookup "$r1" "$s"
-}
-pushed () {
-    local e="$1"
-    local s="$2"
-    local v="$3"
-    envalloc "$e" "$s" "$v"
-}
-stackpush () {
-    local name="stack${1}"
-    local val="$2"
-
-    eval "
-    [[ -z \"\$$name\" ]] && $name=()
-    $name[\${#$name[@]}]='$val'
-    "
-}
-stackpop () {
-    local name="stack${1}"
-
-    eval "local len=\${#${name}[@]}"
-    local i=$(( $len - 1 ))
-
-    eval "popret=\${$name[$i]}"
-    unset $name[$i]
 }
 evaluate () {
     local evalenv="$1"
@@ -233,11 +191,10 @@ evaluate () {
             retval="$r1"
             retenv="$evalenv" ;;
         "pair")
-            stackpush "val" "${second}"
+            local sec=${second}
             evaluate "$evalenv" "$first"
             valdestruct "$retval"
-            stackpop "val"
-            eval "$first" "'$retenv'" "'$popret'";;
+            eval "$first" "'$retenv'" "'$sec'";;
         "symbol")
             lookup "$evalenv" "$first"
             retval="$r1"
@@ -247,43 +204,35 @@ evaluate () {
 evaluatelist () {
     local e=$1
     valdestruct $2
-    stackpush "evallist" $second
+    local sec=$second
 
     evaluate $e $first
-
-    stackpop "evallist"
-    local sec=$popret
 
     valdestruct $sec
     [[ $kind == "nil" ]] && return
     evaluatelist $retenv $sec
 }
 funcprint () {
-    local e=$1
-    local v=$2
-    stackpush printenv $e
+    local e=$1 v=$2
     valdestruct $v
     evaluate $e $first
     valshow $retval; echo
 
-    stackpop printenv
-    r1=${popret}
-    r2=${VALNIL}
+    retenv=$e
+    retval=${VALNIL}
 }
 funcbegin () {
-    stackpush beginenv "$1"
     evaluatelist "$1" "$2"
-    stackpop beginenv
-    retenv=$popret
+    retenv=$1
 }
 newenv () {
     local e=$ENVNIL
 
     valalloc "func" funcprint
-    pushed $e "print" "$r1"; e=$r1
+    envalloc $e "print" "$r1"; e=$r1
 
     valalloc "func" funcbegin
-    pushed $e "begin" "$r1"; e=$r1
+    envalloc $e "begin" "$r1"; e=$r1
 }
 die () {
     echo "$1" 1>&2
