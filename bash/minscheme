@@ -37,7 +37,6 @@ COMMENT
 
 declare r1 r2 r3          # general return values
 declare kind first second # valdestruct return values
-declare popret            # stackpop return value
 declare retenv retval     # evaluation return values
 
 declare code="$(cat $1))"
@@ -169,7 +168,7 @@ envvalue () {
 }
 lookup () {
     local e="$1" s="$2"
-    [[ $e == -1 ]] && die "not found: '$s'"
+    [[ $e == $ENVNIL ]] && die "not found: '$s'"
 
     envsymbol "$e"
     if [[ "$r1" == "$s" ]]; then
@@ -180,25 +179,25 @@ lookup () {
     lookup "$r1" "$s"
 }
 evaluate () {
-    local evalenv="$1"
+    local e="$1"
     valdestruct "$2"
     case "$kind" in
         "nil" | "bool" | "int")
-            retenv="$evalenv"
+            retenv="$1"
             retval="$2" ;;
         "quote")
             valalloc "quote" "$first"
             retval="$r1"
-            retenv="$evalenv" ;;
+            retenv="$e" ;;
         "pair")
             local sec=${second}
-            evaluate "$evalenv" "$first"
+            evaluate "$e" "$first"
             valdestruct "$retval"
-            eval "$first" "'$retenv'" "'$sec'";;
+            eval "$first" "$retenv" "$sec";;
         "symbol")
-            lookup "$evalenv" "$first"
+            lookup "$e" "$first"
             retval="$r1"
-            retenv="$evalenv" ;;
+            retenv="$e" ;;
     esac
 }
 evaluatelist () {
