@@ -12,7 +12,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	code = string(b) + ")"
+	code = string(b)
 
 	newEnv().evalList(list())
 }
@@ -92,33 +92,24 @@ func skip() {
 
 func token() string {
 	skip()
-	c := next()
-	if c == '(' {
-		return "("
-	} else if c == ')' {
-		return ")"
-	} else if c == '#' {
-		return string(c) + string(next())
-	} else if c == '\'' {
-		return "'"
-	} else {
-		s := ""
-		for {
+	switch c := next(); c {
+	case '(', ')', '\'':
+		return string(c)
+	case '#':
+		return "#" + string(next())
+	default:
+		s := string(c)
+		for c = peek(); c != ')' && c != ' ' && c != '\n'; c = peek() {
 			s += string(c)
-			c = peek()
-			if c != '(' && c != ')' && c != ' ' && c != '\n' {
-				next()
-				continue
-			}
-			return s
+			next()
 		}
+		return s
 	}
 }
 
 func list() *Value {
 	skip()
-	if peek() == ')' {
-		next()
+	if len(code) == 0 || peek() == ')' {
 		return &Value{kind: KindNone}
 	}
 	return &Value{
@@ -131,7 +122,9 @@ func list() *Value {
 func value() *Value {
 	t := token()
 	if t[0] == '(' {
-		return list()
+		res := list()
+		next()
+		return res
 	} else if t[0] == '#' {
 		return &Value{
 			kind:    KindBool,
@@ -196,11 +189,7 @@ func (e *Env) pushed(symbol string, value *Value) *Env {
 
 func (e *Env) eval(v *Value) (*Env, *Value) {
 	switch v.kind {
-	case KindNone:
-		return e, v
-	case KindBool:
-		return e, v
-	case KindInt:
+	case KindNone, KindBool, KindInt:
 		return e, v
 	case KindQuote:
 		return e, v.quoted
