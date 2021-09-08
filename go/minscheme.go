@@ -28,20 +28,23 @@ const (
 	KindPair
 	KindSymbol
 	KindFunc
+	KindFunc2
 	KindQuote
 )
 
-type Func func(e *Env, v *Value) (*Env, *Value)
+type Func func(e *Env, v *Value) *Value
+type Func2 func(e *Env, v *Value) (*Env, *Value)
 
 type Value struct {
-	kind     Kind
-	first    *Value // Pair
-	second   *Value
-	symbol   string
-	boolVal  bool
-	intVal   int
-	function Func
-	quoted   *Value
+	kind    Kind
+	first   *Value // Pair
+	second  *Value
+	symbol  string
+	boolVal bool
+	intVal  int
+	func1   Func
+	func2   Func2
+	quoted  *Value
 }
 
 func newNone() *Value            { return &Value{kind: KindNone} }
@@ -49,8 +52,10 @@ func newBool(x bool) *Value      { return &Value{kind: KindBool, boolVal: x} }
 func newInt(x int) *Value        { return &Value{kind: KindInt, intVal: x} }
 func newPair(x, y *Value) *Value { return &Value{kind: KindPair, first: x, second: y} }
 func newSymbol(x string) *Value  { return &Value{kind: KindSymbol, symbol: x} }
-func newFunc(f Func) *Value      { return &Value{kind: KindFunc, function: f} }
-func newQuote(x *Value) *Value   { return &Value{kind: KindQuote, quoted: x} }
+
+func newFunc(f Func) *Value    { return &Value{kind: KindFunc, func1: f} }
+func newFunc2(f Func2) *Value  { return &Value{kind: KindFunc2, func2: f} }
+func newQuote(x *Value) *Value { return &Value{kind: KindQuote, quoted: x} }
 
 func (v *Value) String() string {
 	switch v.kind {
@@ -97,6 +102,16 @@ func (v *Value) eq(u *Value) bool {
 		return v.symbol == u.symbol
 	}
 	return false
+}
+
+func (v *Value) call2(e *Env, u *Value) (*Env, *Value) {
+	switch v.kind {
+	case KindFunc:
+		return e, v.func1(e, u)
+	case KindFunc2:
+		return v.func2(e, u)
+	}
+	panic("call2: " + v.String())
 }
 
 func next() byte {
@@ -213,7 +228,7 @@ func (e *Env) eval2(v *Value) (*Env, *Value) {
 	case KindQuote:
 		return e, v.quoted
 	case KindPair:
-		return e.eval(v.first).function(e, v.second)
+		return e.eval(v.first).call2(e, v.second)
 	case KindSymbol:
 		return e, e.lookup(v.symbol)
 	}
@@ -253,147 +268,147 @@ func zipIter(xs, ys *Value, f func(x, y *Value)) {
 
 func newEnv() *Env {
 	var env *Env
-	return env.pushed("-", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+	return env.pushed("-", newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
 		y := e.eval(v.second.first)
-		return e, newInt(x.intVal - y.intVal)
-	})).pushed("+", newFunc(func(e *Env, v *Value) (*Env, *Value) {
-		return e, e.fold(v, func(x, y *Value) *Value {
+		return newInt(x.intVal - y.intVal)
+	})).pushed("+", newFunc(func(e *Env, v *Value) *Value {
+		return e.fold(v, func(x, y *Value) *Value {
 			return newInt(x.intVal + y.intVal)
 		})
-	})).pushed("*", newFunc(func(e *Env, v *Value) (*Env, *Value) {
-		return e, e.fold(v, func(x, y *Value) *Value {
+	})).pushed("*", newFunc(func(e *Env, v *Value) *Value {
+		return e.fold(v, func(x, y *Value) *Value {
 			return newInt(x.intVal * y.intVal)
 		})
-	})).pushed("/", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+	})).pushed("/", newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
 		y := e.eval(v.second.first)
-		return e, newInt(x.intVal / y.intVal)
-	})).pushed("=", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newInt(x.intVal / y.intVal)
+	})).pushed("=", newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
 		y := e.eval(v.second.first)
-		return e, newBool(x.intVal == y.intVal)
-	})).pushed("<", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newBool(x.intVal == y.intVal)
+	})).pushed("<", newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
 		y := e.eval(v.second.first)
-		return e, newBool(x.intVal < y.intVal)
-	})).pushed("<=", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newBool(x.intVal < y.intVal)
+	})).pushed("<=", newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
 		y := e.eval(v.second.first)
-		return e, newBool(x.intVal <= y.intVal)
-	})).pushed(">", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newBool(x.intVal <= y.intVal)
+	})).pushed(">", newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
 		y := e.eval(v.second.first)
-		return e, newBool(x.intVal > y.intVal)
-	})).pushed(">=", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newBool(x.intVal > y.intVal)
+	})).pushed(">=", newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
 		y := e.eval(v.second.first)
-		return e, newBool(x.intVal >= y.intVal)
-	})).pushed("and", newFunc(func(e *Env, v *Value) (*Env, *Value) {
-		return e, e.fold(v, func(x, y *Value) *Value {
+		return newBool(x.intVal >= y.intVal)
+	})).pushed("and", newFunc(func(e *Env, v *Value) *Value {
+		return e.fold(v, func(x, y *Value) *Value {
 			return newBool(x.asBool() && y.asBool())
 		})
-	})).pushed("or", newFunc(func(e *Env, v *Value) (*Env, *Value) {
-		return e, e.fold(v, func(x, y *Value) *Value {
+	})).pushed("or", newFunc(func(e *Env, v *Value) *Value {
+		return e.fold(v, func(x, y *Value) *Value {
 			return newBool(x.asBool() || y.asBool())
 		})
-	})).pushed("print", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+	})).pushed("print", newFunc(func(e *Env, v *Value) *Value {
 		u := e.eval(v.first)
 		fmt.Println(u)
-		return e, newNone()
-	})).pushed("begin", newFunc(func(e *Env, v *Value) (*Env, *Value) {
-		return e, e.evalList(v)
-	})).pushed("not", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newNone()
+	})).pushed("begin", newFunc(func(e *Env, v *Value) *Value {
+		return e.evalList(v)
+	})).pushed("not", newFunc(func(e *Env, v *Value) *Value {
 		u := e.eval(v.first)
-		return e, newBool(!u.boolVal)
-	})).pushed("car", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newBool(!u.boolVal)
+	})).pushed("car", newFunc(func(e *Env, v *Value) *Value {
 		u := e.eval(v.first)
-		return e, u.first
-	})).pushed("cdr", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return u.first
+	})).pushed("cdr", newFunc(func(e *Env, v *Value) *Value {
 		u := e.eval(v.first)
-		return e, u.second
-	})).pushed("cons", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return u.second
+	})).pushed("cons", newFunc(func(e *Env, v *Value) *Value {
 		f := e.eval(v.first)
 		s := e.eval(v.second.first)
-		return e, newPair(f, s)
-	})).pushed("eq?", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newPair(f, s)
+	})).pushed("eq?", newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
 		y := e.eval(v.second.first)
-		return e, newBool(x.eq(y))
-	})).pushed("define", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newBool(x.eq(y))
+	})).pushed("define", newFunc2(func(e *Env, v *Value) (*Env, *Value) {
 		funArgs, body := v.first, v.second
 		if funArgs.kind == KindSymbol {
 			u := e.eval(body.first)
 			return e.pushed(funArgs.symbol, u), newNone()
 		}
-		e = e.pushed(funArgs.first.symbol, newFunc(func(e2 *Env, v2 *Value) (*Env, *Value) {
+		e = e.pushed(funArgs.first.symbol, newFunc(func(e2 *Env, v2 *Value) *Value {
 			ne := e
 			zipIter(funArgs.second, v2, func(x, y *Value) {
 				val := e2.eval(y)
 				ne = ne.pushed(x.symbol, val)
 			})
-			return e2, ne.evalList(body)
+			return ne.evalList(body)
 		}))
 		return e, newNone()
-	})).pushed("lambda", newFunc(func(e *Env, v *Value) (*Env, *Value) {
-		return e, newFunc(func(e2 *Env, v2 *Value) (*Env, *Value) {
+	})).pushed("lambda", newFunc(func(e *Env, v *Value) *Value {
+		return newFunc(func(e2 *Env, v2 *Value) *Value {
 			zipIter(v.first, v2, func(x, y *Value) {
 				val := e2.eval(y)
 				e = e.pushed(x.symbol, val)
 			})
-			return e2, e.evalList(v.second)
+			return e.evalList(v.second)
 		})
-	})).pushed("let", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+	})).pushed("let", newFunc(func(e *Env, v *Value) *Value {
 		ne := e
 		symValIter(v.first, func(sym string, val *Value) {
 			val = e.eval(val)
 			ne = ne.pushed(sym, val)
 		})
-		return e, ne.evalList(v.second)
-	})).pushed("let*", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return ne.evalList(v.second)
+	})).pushed("let*", newFunc(func(e *Env, v *Value) *Value {
 		ne := e
 		symValIter(v.first, func(sym string, val *Value) {
 			val = ne.eval(val)
 			ne = ne.pushed(sym, val)
 		})
-		return e, ne.evalList(v.second)
-	})).pushed("letrec", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return ne.evalList(v.second)
+	})).pushed("letrec", newFunc(func(e *Env, v *Value) *Value {
 		ne := e
 		symValIter(v.first, func(sym string, val *Value) {
 			ne.pushed(sym, nil)
 			ne.value = ne.eval(val)
 		})
-		return e, ne.evalList(v.second)
-	})).pushed("if", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return ne.evalList(v.second)
+	})).pushed("if", newFunc(func(e *Env, v *Value) *Value {
 		u := v.second.first
 		if b := e.eval(v.first); !b.boolVal {
 			u = v.second.second.first
 		}
 		u = e.eval(u)
-		return e, u
-	})).pushed("cond", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return u
+	})).pushed("cond", newFunc(func(e *Env, v *Value) *Value {
 		for v.kind != KindNone {
 			kv := v.first
 			if b := e.eval(kv.first); b.boolVal {
 				v = e.eval(kv.second.first)
-				return e, v
+				return v
 			}
 			v = v.second
 		}
 		panic("cond has no else")
-	})).pushed("else", newBool(true)).pushed("set!", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+	})).pushed("else", newBool(true)).pushed("set!", newFunc(func(e *Env, v *Value) *Value {
 		y := e.eval(v.second.first)
 		e.set(v.first.symbol, y)
-		return e, newNone()
-	})).pushed("set-car!", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newNone()
+	})).pushed("set-car!", newFunc(func(e *Env, v *Value) *Value {
 		pair := e.eval(v.first)
 		u := e.eval(v.second.first)
 		pair.first = u
-		return e, newNone()
-	})).pushed("set-cdr!", newFunc(func(e *Env, v *Value) (*Env, *Value) {
+		return newNone()
+	})).pushed("set-cdr!", newFunc(func(e *Env, v *Value) *Value {
 		pair := e.eval(v.first)
 		u := e.eval(v.second.first)
 		pair.second = u
-		return e, newNone()
+		return newNone()
 	}))
 }
