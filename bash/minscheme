@@ -38,31 +38,34 @@ linked list and the value for the symbol.
 Using dynamic scope and eval, function return values can be emulated.
 Functions typically end with eval to set return values. Example:
   add () {
-    y=$(( $2 + $3 ))
-    eval "$1='$y'"
+    local a=$1 b=$2
+    shift 2
+    local res=$(( $a + $b ))
+    eval "$1='$res'"
   }
   main () {
     local x
-    add x 1 2
+    add 1 2 x
     echo $x   # 3
   }
 To use this technique, it's important that variables have unique names. In the
-above example if we substitute y with x, the program will output nothing.
+above example if we substitute a with x, the program will output nothing.
 To ensure variable name uniqueness, a wrapper named call is used. call
 generates unique id and use it in place of return values on calling wrapped
 function, and forwards the results. call should be used whenever return values
 are used. Example:
   fact () {
-    local res
-    if [[ $2 -eq 0 ]]; then
+    local n=$1 res
+    shift 1
+    if [[ $n -eq 0 ]]; then
         res=1
     else
-        call fact res $(( $2 - 1 ))
-        res=$(( $2 * $res ))
+        call fact $(( $n - 1 )) res
+        res=$(( $n * $res ))
     fi
     eval "$1='$res'"
   }
-  call fact res 10
+  call fact 10 res
   echo $res
 COMMENT
 
@@ -72,13 +75,51 @@ declare retenv retval     # evaluation return values
 
 declare code="$(cat $1))"
 
+MAX_CALL=1000
 call_index=0
 call () {
-    [[ $call_index -lt 1000 ]] || die "call_index >= 1000"
-    call_index=$(( call_index + 1 ))
-    local name="call_variable${call_index}"
-    $1 $name "${@:3}"
-    eval $2="'${!name}'" || die "call"
+    [[ $call_index -lt $MAX_CALL ]] || die "call_index >= $MAX_CALL"
+    # use long name not to collide with return value names
+    local call_variable_name="call_variable$(( call_index += 1 ))"
+    local call_all_args=( "$@" )
+    local call_real_name="${call_all_args[$(( $# - 1 ))]}"
+    call_all_args[$(( $# - 1 ))]=$call_variable_name
+    "${call_all_args[@]}"
+    eval "$call_real_name='${!call_variable_name}'" || die "call"
+}
+call2 () {
+    [[ $call_index -lt $MAX_CALL ]] || die "call_index >= $MAX_CALL"
+    local call_variable_name1="call_variable$(( call_index += 1 ))"
+    local call_variable_name2="call_variable$(( call_index += 1 ))"
+    local call_all_args=( "$@" )
+    local call_real_name1="${call_all_args[$(( $# - 2 ))]}"
+    local call_real_name2="${call_all_args[$(( $# - 1 ))]}"
+    call_all_args[$(( $# - 2 ))]=$call_variable_name1
+    call_all_args[$(( $# - 1 ))]=$call_variable_name2
+    "${call_all_args[@]}"
+    eval "
+        $call_real_name1='${!call_variable_name1}'
+        $call_real_name2='${!call_variable_name2}'
+    " || die "call2"
+}
+call3 () {
+    [[ $call_index -lt $MAX_CALL ]] || die "call_index >= $MAX_CALL"
+    local call_variable_name1="call_variable$(( call_index += 1 ))"
+    local call_variable_name2="call_variable$(( call_index += 1 ))"
+    local call_variable_name3="call_variable$(( call_index += 1 ))"
+    local call_all_args=( "$@" )
+    local call_real_name1="${call_all_args[$(( $# - 3 ))]}"
+    local call_real_name2="${call_all_args[$(( $# - 2 ))]}"
+    local call_real_name3="${call_all_args[$(( $# - 1 ))]}"
+    call_all_args[$(( $# - 3 ))]=$call_variable_name1
+    call_all_args[$(( $# - 2 ))]=$call_variable_name2
+    call_all_args[$(( $# - 1 ))]=$call_variable_name3
+    "${call_all_args[@]}"
+    eval "
+        $call_real_name1='${!call_variable_name1}'
+        $call_real_name2='${!call_variable_name2}'
+        $call_real_name3='${!call_variable_name3}'
+    " || die "call3"
 }
 
 next () {
@@ -131,18 +172,26 @@ token () {
 VALARENA=("nil" "" "")
 VALNIL=0
 valalloc () {
-    r1="${#VALARENA[*]}"
-    VALARENA[$r1]="$1"
-    VALARENA[$(( $r1 + 1 ))]="$2"
-    VALARENA[$(( $r1 + 2 ))]="$3"
+    local kind="$1" first="$2" second="$3"
+    shift 3
+    local i=${#VALARENA[*]}
+    VALARENA[$i]="$kind"
+    VALARENA[$(( $i + 1 ))]="$first"
+    VALARENA[$(( $i + 2 ))]="$second"
+
+    eval "$1='$i'" || die "valalloc"
 }
 valdestruct () {
-    kind="${VALARENA[$(( $1 + 0 ))]}"
-    first="${VALARENA[$(( $1 + 1 ))]}"
-    second="${VALARENA[$(( $1 + 2 ))]}"
+    local x=$1
+    shift
+    local kind="${VALARENA[$(( $x + 0 ))]}"
+    local first="${VALARENA[$(( $x + 1 ))]}"
+    local second="${VALARENA[$(( $x + 2 ))]}"
+
+    eval "$1='$kind'; $2='$first'; $3='$second'" || die "valdestruct"
 }
 valshow () {
-    valdestruct "$1"
+    call3 valdestruct "$1" kind first secon
     case "$kind" in
         "nil")
             echo -n nil;;
@@ -165,38 +214,43 @@ valshow () {
     esac
 }
 list () {
+    local x y res
     skip
-    call peek r1
-    if [[ "$r1" == ")" ]]; then
+    call peek x
+    if [[ "$x" == ")" ]]; then
         next _
-        r1="${VALNIL}"
-        return
+        res="${VALNIL}"
+    else
+        call value x
+        call list y
+        call valalloc pair "$x" "$y" res
     fi
-    value
-    local v="$r1"
-    list
-    local l="$r1"
-    valalloc pair "$v" "$l"
+
+    eval "$1='$res'" || die "list"
 }
 value () {
-    call token r1
-    case "${r1:0:1}" in
+    local x res
+
+    call token x
+    case "${x:0:1}" in
         "(")
-            list
-            return ;;
+            call list res;;
         "#")
-            valalloc "bool" "${r1:1}"
-            return ;;
+            call valalloc "bool" "${x:1}" _ res
+            ;;
         '`')
-            value
-            valalloc "quote" "$r1"
-            return ;;
+            call value x
+            call valalloc "quote" "$x" _ res
+            ;;
+        *)
+            if [[ "$x" =~ ^-?[0-9]+$ ]]; then
+                call valalloc "int" "$r1" _ res
+            else
+                call valalloc "symbol" "$x" _ res
+            fi;;
     esac
-    if [[ "$r1" =~ ^-?[0-9]+$ ]]; then
-        valalloc "int" "$r1"
-        return
-    fi
-    valalloc "symbol" "$r1"
+
+    eval "$1='$res'"
 }
 ENVNIL="-1"
 ENVARENA=()
@@ -206,95 +260,97 @@ envalloc () {
     ENVARENA[$(( $r1 + 1 ))]="$2"
     ENVARENA[$(( $r1 + 2 ))]="$3"
 }
-envnext () {
-    local e="$1"
-    r1="${ENVARENA[$e]}"
-}
-envsymbol () {
-    local e="$1"
-    r1="${ENVARENA[$(( $e + 1 ))]}"
-}
-envvalue () {
-    local e="$1"
-    r1="${ENVARENA[$(( $e + 2 ))]}"
+envdestruct () {
+    local x="$1"
+    shift 1
+    eval "
+        $1='${ENVARENA[$x]}'
+        $2='${ENVARENA[$(( $x + 1 ))]}'
+        $3='${ENVARENA[$(( $x + 2 ))]}'
+    "
 }
 lookup () {
-    local e="$1" s="$2"
+    local e="$1" s="$2" res next symbol value
+    shift 2
     [[ $e == $ENVNIL ]] && die "not found: '$s'"
 
-    envsymbol "$e"
-    if [[ "$r1" == "$s" ]]; then
-        envvalue "$e"
-        return
+    call3 envdestruct $e next symbol value
+    if [[ "$symbol" == "$s" ]]; then
+        res=$value
+    else 
+        call lookup "$next" "$s" res
     fi
-    envnext "$e"
-    lookup "$r1" "$s"
+    eval "$1='$res'"
 }
 evaluate () {
-    local e="$1"
-    valdestruct "$2"
-    case "$kind" in
+    local e="$1" v="$2" v_kind v_first v_second u retenv retval
+    shift 2
+    call3 valdestruct $v v_kind v_first v_second
+    case "$v_kind" in
         "nil" | "bool" | "int")
-            retenv="$1"
-            retval="$2" ;;
+            retenv="$e"
+            retval="$v" ;;
         "quote")
-            valalloc "quote" "$first"
-            retval="$r1"
-            retenv="$e" ;;
+            retenv="$e"
+            retval="$v_first" ;;
         "pair")
-            local sec=${second}
-            evaluate "$e" "$first"
-            valdestruct "$retval"
-            eval "$first" "$retenv" "$sec";;
+            call2 evaluate "$e" "$v_first" _ u
+            call3 valdestruct "$u" _ fun _
+            eval "$fun" "$e" "$v_second";;
         "symbol")
-            lookup "$e" "$first"
-            retval="$r1"
-            retenv="$e" ;;
+            call lookup "$e" "$v_first" retval
+            retenv="$e";;
     esac
+
+    eval "$1='$retenv'; $2='$retval'"
 }
 evaluatelist () {
-    local e=$1
-    valdestruct $2
-    local sec=$second
-
-    evaluate $e $first
-
-    valdestruct $sec
-    [[ $kind == "nil" ]] && return
-    evaluatelist $retenv $sec
+    local e=$1 v=$2 v_kind v_first v_second v_second_kind res
+    shift 2
+    call3 valdestruct "$v" v_kind v_first v_second
+    call2 evaluate "$e" "$v_first" e res
+    call3 valdestruct "$v_second" v_second_kind _ _
+    if [[ $v_second_kind == "nil" ]]; then
+        :
+    else
+        call evaluatelist "$e" "$v_second" res
+    fi
+    eval "$1='$res'" || die "evaluatelist"
 }
 funcprint () {
     local e=$1 v=$2
-    valdestruct $v
-    evaluate $e $first
+    call3 valdestruct $v kind first second
+    call2 evaluate $e $first retenv retval
     valshow $retval; echo
 
     retenv=$e
     retval=${VALNIL}
 }
 funcbegin () {
-    evaluatelist "$1" "$2"
+    call evaluatelist "$1" "$2" retval
     retenv=$1
 }
 newenv () {
     local e=$ENVNIL
 
-    valalloc "func" funcprint
+    call valalloc "func" funcprint _ r1
     envalloc $e "print" "$r1"; e=$r1
 
-    valalloc "func" funcbegin
+    call valalloc "func" funcbegin _ r1
     envalloc $e "begin" "$r1"; e=$r1
 }
 die () {
-    echo "$1" 1>&2
+    echo "die: $1" 1>&2
     exit 1
 }
 main () {
     newenv
     local e="${r1}"
 
-    list
-    evaluatelist "$e" "$r1"
+    local x
+    call list x
+
+    call evaluatelist "$e" "$x" _
 }
 
 main
