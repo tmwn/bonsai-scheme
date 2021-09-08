@@ -55,6 +55,7 @@ COMMENT
 declare r1 r2 r3          # general return values
 declare kind first second # valdestruct return values
 declare popret            # stackpop return value
+declare retenv retval     # evaluation return values
 
 declare code="$(cat $1))"
 
@@ -225,39 +226,37 @@ evaluate () {
     valdestruct "$2"
     case "$kind" in
         "nil" | "bool" | "int")
-            r1="$evalenv"
-            r2="$2" ;;
+            retenv="$evalenv"
+            retval="$2" ;;
         "quote")
             valalloc "quote" "$first"
-            r2="$r1"
-            r1="$evalenv" ;;
+            retval="$r1"
+            retenv="$evalenv" ;;
         "pair")
             stackpush "val" "${second}"
             evaluate "$evalenv" "$first"
-            valdestruct "$r2"
+            valdestruct "$retval"
             stackpop "val"
-            eval "$first" "'$r1'" "'$popret'";;
+            eval "$first" "'$retenv'" "'$popret'";;
         "symbol")
             lookup "$evalenv" "$first"
-            r2="$r1"
-            r1="$evalenv" ;;
+            retval="$r1"
+            retenv="$evalenv" ;;
     esac
 }
 evaluatelist () {
-    local e="$1"
-    local v="$2"
-    r1=${VALNIL}
-    local res="$r1"
-    valdestruct "$v"
-    while [[ "$kind" != "nil" ]]; do
-        local sec="${second}"
-        evaluate "$e" "${first}"
-        e="${r1}"
-        res="${r2}"
-        v="${sec}"
-        valdestruct "$v"
-    done
-    r1="${res}"
+    local e=$1
+    valdestruct $2
+    stackpush "evallist" $second
+
+    evaluate $e $first
+
+    stackpop "evallist"
+    local sec=$popret
+
+    valdestruct $sec
+    [[ $kind == "nil" ]] && return
+    evaluatelist $retenv $sec
 }
 funcprint () {
     local e=$1
@@ -265,28 +264,17 @@ funcprint () {
     stackpush printenv $e
     valdestruct $v
     evaluate $e $first
-    valshow $r2; echo
+    valshow $retval; echo
 
     stackpop printenv
     r1=${popret}
     r2=${VALNIL}
 }
 funcbegin () {
-    local e=$1
-    local v=$2
-    r2="${VALNIL}"
-    valdestruct "$v"
-    while [[ "$kind" != "nil" ]] ; do
-        stackpush beginenv $e
-        stackpush beginval $second
-        evaluate $e $first
-        stackpop beginval
-        v=$popret
-        stackpop beginenv
-        e=$popret
-        valdestruct "$v"
-    done
-    r1=$e
+    stackpush beginenv "$1"
+    evaluatelist "$1" "$2"
+    stackpop beginenv
+    retenv=$popret
 }
 newenv () {
     local e=$ENVNIL
