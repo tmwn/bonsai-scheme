@@ -203,12 +203,11 @@ func (e *Env) eval(v *Value) (*Env, *Value) {
 }
 
 func (e *Env) evalList(v *Value) *Value {
-	res := &Value{kind: KindNone}
-	for v.kind != KindNone {
-		e, res = e.eval(v.first)
-		v = v.second
+	e, res := e.eval(v.first)
+	if v.second.kind == KindNone {
+		return res
 	}
-	return res
+	return e.evalList(v.second)
 }
 
 func (v *Value) String() string {
