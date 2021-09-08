@@ -33,6 +33,37 @@ appears in the program are referenced by its index in the env arena.
 
 name is a symbol string. next and value are pointers to the next item in the
 linked list and the value for the symbol.
+
+# Function calls
+Using dynamic scope and eval, function return values can be emulated.
+Functions typically end with eval to set return values. Example:
+  add () {
+    y=$(( $2 + $3 ))
+    eval "$1='$y'"
+  }
+  main () {
+    local x
+    add x 1 2
+    echo $x   # 3
+  }
+To use this technique, it's important that variables have unique names. In the
+above example if we substitute y with x, the program will output nothing.
+To ensure variable name uniqueness, a wrapper named call is used. call
+generates unique id and use it in place of return values on calling wrapped
+function, and forwards the results. call should be used whenever return values
+are used. Example:
+  fact () {
+    local res
+    if [[ $2 -eq 0 ]]; then
+        res=1
+    else
+        call fact res $(( $2 - 1 ))
+        res=$(( $2 * $res ))
+    fi
+    eval "$1='$res'"
+  }
+  call fact res 10
+  echo $res
 COMMENT
 
 declare r1 r2 r3          # general return values
@@ -41,40 +72,61 @@ declare retenv retval     # evaluation return values
 
 declare code="$(cat $1))"
 
+call_index=0
+call () {
+    [[ $call_index -lt 1000 ]] || die "call_index >= 1000"
+    call_index=$(( call_index + 1 ))
+    local name="call_variable${call_index}"
+    $1 $name "${@:3}"
+    eval $2="'${!name}'" || die "call"
+}
+
 next () {
-    peek
+    local x
+
+    call peek x
     code="${code:1}"
+
+    eval "$1='$x'"
 }
 peek () {
-    r1="${code:0:1}"
+    local x="${code:0:1}" 
+    [[ $x == "'" ]] && x='`' # not to mess up eval
+    eval "$1='$x'"
 }
 skip () {
+    local x
     [[ -z "$code" ]] && return
-    peek
-    if [[ "$r1" == " " ]] || [[ "$r1" == $'\n' ]]; then
-        next
+
+    call peek x
+    if [[ "$x" == " " ]] || [[ "$x" == $'\n' ]]; then
+        next _
         skip
     fi
 }
 token () {
+    local x y
+    
     skip
-    next
-    case "$r1" in
-        "(" | ")" | "'")
-            return ;;
+    call next x
+    case "$x" in
+        "(" | ")" | '`')
+            : ;;
         "#")
-            next
-            r1="#${r1}"
-            return ;;
+            call next x
+            x="#${x}"
+            ;;
+        *)
+            call peek y
+            while [[ "$y" != ")" ]] && [[ "$y" != " " ]] && ! [[ "$y" == $'\n' ]]; do
+                x="${x}${y}"
+                next _
+                call peek y
+            done
+            ;;
     esac
-    local s="${r1}"
-    peek
-    while [[ "$r1" != ")" ]] && [[ "$r1" != " " ]] && ! [[ "$r1" == $'\n' ]]; do
-        s="${s}${r1}"
-        next
-        peek
-    done
-    r1="${s}"
+
+    eval "$1='$x'"
 }
 VALARENA=("nil" "" "")
 VALNIL=0
@@ -114,9 +166,9 @@ valshow () {
 }
 list () {
     skip
-    peek
+    call peek r1
     if [[ "$r1" == ")" ]]; then
-        next
+        next _
         r1="${VALNIL}"
         return
     fi
@@ -127,7 +179,7 @@ list () {
     valalloc pair "$v" "$l"
 }
 value () {
-    token
+    call token r1
     case "${r1:0:1}" in
         "(")
             list
@@ -135,7 +187,7 @@ value () {
         "#")
             valalloc "bool" "${r1:1}"
             return ;;
-        "'")
+        '`')
             value
             valalloc "quote" "$r1"
             return ;;
@@ -240,6 +292,7 @@ die () {
 main () {
     newenv
     local e="${r1}"
+
     list
     evaluatelist "$e" "$r1"
 }
