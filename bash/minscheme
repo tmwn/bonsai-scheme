@@ -55,7 +55,6 @@ COMMENT
 declare r1 r2 r3          # general return values
 declare kind first second # valdestruct return values
 declare popret            # stackpop return value
-declare env val           # func input values
 
 declare code="$(cat $1))"
 
@@ -69,7 +68,7 @@ peek () {
 skip () {
     [[ -z "$code" ]] && return
     peek
-    if [[ "$r1" == " " ]] || [[ "$r1" == "\n" ]]; then
+    if [[ "$r1" == " " ]] || [[ "$r1" == $'\n' ]]; then
         next
         skip
     fi
@@ -87,7 +86,7 @@ token () {
     esac
     local s="${r1}"
     peek
-    while [[ "$r1" != ")" ]] && [[ "$r1" != " " ]] && [[ "$r1" != "\n" ]]; do
+    while [[ "$r1" != ")" ]] && [[ "$r1" != " " ]] && ! [[ "$r1" == $'\n' ]]; do
         s="${s}${r1}"
         next
         peek
@@ -187,12 +186,14 @@ envvalue () {
 lookup () {
     local e="$1"
     local s="$2"
+    [[ $e == -1 ]] && die "not found: '$s'"
+
     envsymbol "$e"
     if [[ "$r1" == "$s" ]]; then
         envvalue "$e"
         return
     fi
-    envnext
+    envnext "$e"
     lookup "$r1" "$s"
 }
 pushed () {
@@ -234,11 +235,8 @@ evaluate () {
             stackpush "val" "${second}"
             evaluate "$evalenv" "$first"
             valdestruct "$r2"
-            local fun="$first"
-            env="$r1"
             stackpop "val"
-            val="$popret"
-            eval "$fun" ;;
+            eval "$first" "'$r1'" "'$popret'";;
         "symbol")
             lookup "$evalenv" "$first"
             r2="$r1"
@@ -261,18 +259,48 @@ evaluatelist () {
     done
     r1="${res}"
 }
-newenv () {
-    valalloc "func" '
-    valdestruct $val
-    evaluate $env $first
-    valshow $r2
-    echo
-    r1=-1
-    r2=-1
-'
-    pushed ENVNIL "print" "$r1"
-}
+funcprint () {
+    local e=$1
+    local v=$2
+    stackpush printenv $e
+    valdestruct $v
+    evaluate $e $first
+    valshow $r2; echo
 
+    stackpop printenv
+    r1=${popret}
+    r2=${VALNIL}
+}
+funcbegin () {
+    local e=$1
+    local v=$2
+    r2="${VALNIL}"
+    valdestruct "$v"
+    while [[ "$kind" != "nil" ]] ; do
+        stackpush beginenv $e
+        stackpush beginval $second
+        evaluate $e $first
+        stackpop beginval
+        v=$popret
+        stackpop beginenv
+        e=$popret
+        valdestruct "$v"
+    done
+    r1=$e
+}
+newenv () {
+    local e=$ENVNIL
+
+    valalloc "func" funcprint
+    pushed $e "print" "$r1"; e=$r1
+
+    valalloc "func" funcbegin
+    pushed $e "begin" "$r1"; e=$r1
+}
+die () {
+    echo "$1" 1>&2
+    exit 1
+}
 main () {
     newenv
     local e="${r1}"
