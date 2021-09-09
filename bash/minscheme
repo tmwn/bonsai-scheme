@@ -296,7 +296,7 @@ evaluate () {
         "pair")
             call2 evaluate "$e" "$v_first" _ u
             call3 valdestruct "$u" _ fun _
-            eval "$fun" "$e" "$v_second";;
+            eval call2 "$fun" "'$e'" "'$v_second'" retenv retval || die "evaluate" ;;
         "symbol")
             call lookup "$e" "$v_first" retval
             retenv="$e";;
@@ -318,17 +318,19 @@ evaluatelist () {
     eval "$1='$res'" || die "evaluatelist"
 }
 funcprint () {
-    local e=$1 v=$2
+    local e=$1 v=$2 kind first second retenv retval
+    shift 2
     call3 valdestruct $v kind first second
     call2 evaluate $e $first retenv retval
     valshow $retval; echo
 
-    retenv=$e
-    retval=${VALNIL}
+    eval "$1='$e'; $2=${VALNIL}"
 }
 funcbegin () {
-    call evaluatelist "$1" "$2" retval
-    retenv=$1
+    local e=$1 v=$2 retval
+    shift 2
+    call evaluatelist "$e" "$v" retval
+    eval "$1='$e'; $2='$retval'"
 }
 newenv () {
     local e=$ENVNIL x
