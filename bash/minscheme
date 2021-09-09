@@ -63,10 +63,12 @@ are used. Example:
         call fact $(( $n - 1 )) res
         res=$(( $n * $res ))
     fi
-    eval "$1='$res'"
+    $returns res
   }
   call fact 10 res
   echo $res
+
+Here, $returns is a shorthand for eval "$1='$res'".
 COMMENT
 
 declare code="$(cat $1))"
@@ -354,11 +356,6 @@ sets () {
         6) eval "$1=\"\${!4}\"; $2=\"\${!5}\"; $3=\"\${!6}\"" ;;
         *) die "sets: invalid number of args $#" ;;
     esac
-}
-set1 () {
-    eval $1=\"\$2\"
-    shift 2
-    [[ $# -gt 0 ]] && set1 "$@"
 }
 die () {
     log "$@: ${FUNCNAME[@]}" 1>&2
