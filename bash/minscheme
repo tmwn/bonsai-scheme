@@ -124,12 +124,12 @@ next () {
     call peek x
     code="${code:1}"
 
-    eval "$1='$x'"
+    $returns x
 }
 peek () {
     local x="${code:0:1}" 
     [[ $x == "'" ]] && x='`' # not to mess up eval
-    eval "$1='$x'"
+    $returns x
 }
 skip () {
     local x
@@ -155,15 +155,16 @@ token () {
             ;;
         *)
             call peek y
-            while [[ "$y" != ")" ]] && [[ "$y" != " " ]] && ! [[ "$y" == $'\n' ]]; do
+            while [[ "$y" != ")" ]] && [[ "$y" != " " ]] && [[ "$y" != $'\n' ]]; do
                 x="${x}${y}"
-                next _
+
+                call next _
                 call peek y
             done
             ;;
     esac
 
-    eval "$1='$x'"
+    $returns x
 }
 VALARENA=("nil" "" "")
 VALNIL=0
@@ -175,7 +176,7 @@ valalloc () {
     VALARENA[$(( $i + 1 ))]="$first"
     VALARENA[$(( $i + 2 ))]="$second"
 
-    eval "$1='$i'" || die "valalloc"
+    $returns i
 }
 valdestruct () {
     local x=$1
@@ -184,7 +185,7 @@ valdestruct () {
     local first="${VALARENA[$(( $x + 1 ))]}"
     local second="${VALARENA[$(( $x + 2 ))]}"
 
-    eval "$1='$kind'; $2='$first'; $3='$second'" || die "valdestruct"
+    $returns kind first second
 }
 valshow () {
     call3 valdestruct "$1" kind first secon
@@ -224,7 +225,7 @@ list () {
         call valalloc pair "$x" "$y" res
     fi
 
-    eval "$1='$res'" || die "list"
+    $returns res
 }
 value () {
     local x res
@@ -248,7 +249,7 @@ value () {
             fi;;
     esac
 
-    eval "$1='$res'"
+    $returns res
 }
 ENVNIL="-1"
 ENVARENA=()
@@ -258,7 +259,8 @@ envalloc () {
     ENVARENA[$i]="$next"
     ENVARENA[$(( $i + 1 ))]="$symbol"
     ENVARENA[$(( $i + 2 ))]="$value"
-    eval "$1='$i'" || die "envalloc"
+
+    $returns i
 }
 envdestruct () {
     local e="$1"
@@ -280,7 +282,7 @@ lookup () {
     else
         call lookup "$next" "$s" res
     fi
-    eval "$1='$res'"
+    $returns res
 }
 evaluate () {
     local e="$1" v="$2" v_kind v_first v_second u retenv retval
@@ -302,7 +304,7 @@ evaluate () {
             retenv="$e";;
     esac
 
-    eval "$1='$retenv'; $2='$retval'"
+    $returns retenv retval
 }
 evaluatelist () {
     local e=$1 v=$2 v_kind v_first v_second v_second_kind res
@@ -315,7 +317,7 @@ evaluatelist () {
     else
         call evaluatelist "$e" "$v_second" res
     fi
-    eval "$1='$res'" || die "evaluatelist"
+    $returns res
 }
 funcprint () {
     local e=$1 v=$2 kind first second retenv retval
@@ -324,13 +326,13 @@ funcprint () {
     call2 evaluate $e $first retenv retval
     valshow $retval; echo
 
-    eval "$1='$e'; $2=${VALNIL}"
+    $returns e VALNIL
 }
 funcbegin () {
     local e=$1 v=$2 retval
     shift 2
     call evaluatelist "$e" "$v" retval
-    eval "$1='$e'; $2='$retval'"
+    $returns e retval
 }
 newenv () {
     local e=$ENVNIL x
@@ -341,11 +343,29 @@ newenv () {
     call valalloc "func" funcbegin _ x
     call envalloc "$e" begin "$x" e
 
-    eval "$1='$e'"
+    $returns e
+}
+returns="eval sets \$1 \$2 \$3"
+sets () {
+    case $# in
+        0) : ;;
+        2) eval "$1=\"\${!2}\"" ;;
+        4) eval "$1=\"\${!3}\"; $2=\"\${!4}\"" ;;
+        6) eval "$1=\"\${!4}\"; $2=\"\${!5}\"; $3=\"\${!6}\"" ;;
+        *) die "sets: invalid number of args $#" ;;
+    esac
+}
+set1 () {
+    eval $1=\"\$2\"
+    shift 2
+    [[ $# -gt 0 ]] && set1 "$@"
 }
 die () {
-    echo "die: $1" 1>&2
+    log "$@: ${FUNCNAME[@]}" 1>&2
     exit 1
+}
+log () {
+    echo "$@" 1>&2
 }
 main () {
     local e
@@ -353,7 +373,6 @@ main () {
 
     local x
     call list x
-
     call evaluatelist "$e" "$x" _
 }
 
