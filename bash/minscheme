@@ -168,9 +168,12 @@ token () {
 
     $returns x
 }
+
 VALARENA=("nil" "" "")
 VALNIL=0
-valalloc () {
+
+new_val () { call _new_val "$@"; }
+_new_val () {
     local kind="$1" first="$2" second="$3"
     shift 3
     local i=${#VALARENA[*]}
@@ -180,7 +183,8 @@ valalloc () {
 
     $returns i
 }
-valdestruct () {
+valdestruct () { call3 _valdestruct "$@"; }
+_valdestruct () {
     local x=$1
     shift
     local kind="${VALARENA[$(( $x + 0 ))]}"
@@ -190,7 +194,8 @@ valdestruct () {
     $returns kind first second
 }
 valshow () {
-    call3 valdestruct "$1" kind first secon
+    local nonewline="$2"
+    valdestruct "$1" kind first secon
     case "$kind" in
         "nil")
             echo -n nil;;
@@ -201,18 +206,19 @@ valshow () {
         "pair")
             echo -n "( "
             local snd2="${second}"
-            valshow "$first"
+            valshow "$first" 1
             echo -n " . "
-            valshow "${snd2}"
+            valshow "${snd2}" 1
             echo -n " )";;
         "quote")
             echo -n "'"
-            valshow "$first" ;;
+            valshow "$first" 1;;
         "symbol")
             echo -n "$first";;
         "func")
             echo -n "<func>";;
     esac
+    [[ -z "$nonewline" ]] && echo
 }
 list () {
     local x y res
@@ -224,7 +230,7 @@ list () {
     else
         call value x
         call list y
-        call valalloc pair "$x" "$y" res
+        new_val pair "$x" "$y" res
     fi
 
     $returns res
@@ -237,17 +243,17 @@ value () {
         "(")
             call list res;;
         "#")
-            call valalloc "bool" "${x:1}" _ res
+            new_val "bool" "${x:1}" _ res
             ;;
         '`')
             call value x
-            call valalloc "quote" "$x" _ res
+            new_val "quote" "$x" _ res
             ;;
         *)
             if [[ "$x" =~ ^-?[0-9]+$ ]]; then
-                call valalloc "int" "$r1" _ res
+                new_val "int" "$r1" _ res
             else
-                call valalloc "symbol" "$x" _ res
+                new_val "symbol" "$x" _ res
             fi;;
     esac
 
@@ -255,7 +261,8 @@ value () {
 }
 ENVNIL="-1"
 ENVARENA=()
-envalloc () {
+new_env() { call _new_env "$@"; }
+_new_env () {
     local i="${#ENVARENA[@]}" next="$1" symbol="$2" value="$3"
     shift 3
     ENVARENA[$i]="$next"
@@ -286,10 +293,19 @@ lookup () {
     fi
     $returns res
 }
-evaluate () {
+eval1 () { call _eval1 "$@"; }
+_eval1 () {
+    local e="$1" v="$2"
+    shift 2
+
+    eval2 $e $v _ res
+    $returns res
+}
+eval2 () { call2 _eval2 "$@"; }
+_eval2 () {
     local e="$1" v="$2" v_kind v_first v_second u retenv retval
     shift 2
-    call3 valdestruct $v v_kind v_first v_second
+    valdestruct $v v_kind v_first v_second
     case "$v_kind" in
         "nil" | "bool" | "int")
             retenv="$e"
@@ -298,9 +314,10 @@ evaluate () {
             retenv="$e"
             retval="$v_first" ;;
         "pair")
-            call2 evaluate "$e" "$v_first" _ u
-            call3 valdestruct "$u" _ fun _
-            eval call2 "$fun" "'$e'" "'$v_second'" retenv retval || die "evaluate" ;;
+            eval1 "$e" "$v_first" u
+            valdestruct "$u" kind fun _
+            [[ $kind == "func" ]] || die "$kind"
+            eval call2 "'$fun'" "'$e'" "'$v_second'" retenv retval || die ;;
         "symbol")
             call lookup "$e" "$v_first" retval
             retenv="$e";;
@@ -308,42 +325,58 @@ evaluate () {
 
     $returns retenv retval
 }
-evaluatelist () {
+evaluate_list () { call _evaluate_list "$@"; }
+_evaluate_list () {
     local e=$1 v=$2 v_kind v_first v_second v_second_kind res
     shift 2
-    call3 valdestruct "$v" v_kind v_first v_second
-    call2 evaluate "$e" "$v_first" e res
-    call3 valdestruct "$v_second" v_second_kind _ _
+    valdestruct "$v" v_kind v_first v_second
+    eval2 "$e" "$v_first" e res
+    valdestruct "$v_second" v_second_kind _ _
     if [[ $v_second_kind == "nil" ]]; then
         :
     else
-        call evaluatelist "$e" "$v_second" res
+        evaluate_list "$e" "$v_second" res
     fi
     $returns res
 }
-funcprint () {
-    local e=$1 v=$2 kind first second retenv retval
-    shift 2
-    call3 valdestruct $v kind first second
-    call2 evaluate $e $first retenv retval
-    valshow $retval; echo
+op_1 () {
+    local f=$1 e=$2 v=$3 v_kind v_first x res
+    shift 3
 
-    $returns e VALNIL
+    valdestruct $v v_kind v_first _
+    eval1 $e $v_first x
+
+    "$f" "$x" res
+    $returns e res
+}
+doprint () {
+    valshow $1
+    shift
+    $returns VALNIL
+}
+funcprint () {
+    call2 op_1 doprint "$@"
 }
 funcbegin () {
     local e=$1 v=$2 retval
     shift 2
-    call evaluatelist "$e" "$v" retval
+    evaluate_list $e $v retval
     $returns e retval
 }
-newenv () {
+with_func () { call _with_func "$@"; }
+_with_func () {
+    local e=$1 symbol=$2 fun=$3 x ne
+    shift 3
+
+    new_val "func" $fun _ x
+    new_env $e $symbol $x ne
+    $returns ne
+}
+default_env () {
     local e=$ENVNIL x
 
-    call valalloc "func" funcprint _ x
-    call envalloc "$e" print "$x" e
-
-    call valalloc "func" funcbegin _ x
-    call envalloc "$e" begin "$x" e
+    with_func $e print funcprint e
+    with_func $e begin funcbegin e
 
     $returns e
 }
@@ -366,11 +399,11 @@ log () {
 }
 main () {
     local e
-    call newenv e
+    call default_env e
 
     local x
     call list x
-    call evaluatelist "$e" "$x" _
+    evaluate_list "$e" "$x" _
 }
 
 main
