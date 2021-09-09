@@ -69,10 +69,6 @@ are used. Example:
   echo $res
 COMMENT
 
-declare r1 r2 r3          # general return values
-declare kind first second # valdestruct return values
-declare retenv retval     # evaluation return values
-
 declare code="$(cat $1))"
 
 MAX_CALL=1000
@@ -211,6 +207,8 @@ valshow () {
             valshow "$first" ;;
         "symbol")
             echo -n "$first";;
+        "func")
+            echo -n "<func>";;
     esac
 }
 list () {
@@ -255,19 +253,21 @@ value () {
 ENVNIL="-1"
 ENVARENA=()
 envalloc () {
-    r1="${#ENVARENA[*]}"
-    ENVARENA[$r1]="$1"
-    ENVARENA[$(( $r1 + 1 ))]="$2"
-    ENVARENA[$(( $r1 + 2 ))]="$3"
+    local i="${#ENVARENA[@]}" next="$1" symbol="$2" value="$3"
+    shift 3
+    ENVARENA[$i]="$next"
+    ENVARENA[$(( $i + 1 ))]="$symbol"
+    ENVARENA[$(( $i + 2 ))]="$value"
+    eval "$1='$i'" || die "envalloc"
 }
 envdestruct () {
-    local x="$1"
+    local e="$1"
     shift 1
     eval "
-        $1='${ENVARENA[$x]}'
-        $2='${ENVARENA[$(( $x + 1 ))]}'
-        $3='${ENVARENA[$(( $x + 2 ))]}'
-    "
+        $1='${ENVARENA[$e]}'
+        $2='${ENVARENA[$(( $e + 1 ))]}'
+        $3='${ENVARENA[$(( $e + 2 ))]}'
+    " || die "envsectruct"
 }
 lookup () {
     local e="$1" s="$2" res next symbol value
@@ -277,7 +277,7 @@ lookup () {
     call3 envdestruct $e next symbol value
     if [[ "$symbol" == "$s" ]]; then
         res=$value
-    else 
+    else
         call lookup "$next" "$s" res
     fi
     eval "$1='$res'"
@@ -331,21 +331,23 @@ funcbegin () {
     retenv=$1
 }
 newenv () {
-    local e=$ENVNIL
+    local e=$ENVNIL x
 
-    call valalloc "func" funcprint _ r1
-    envalloc $e "print" "$r1"; e=$r1
+    call valalloc "func" funcprint _ x
+    call envalloc "$e" print "$x" e
 
-    call valalloc "func" funcbegin _ r1
-    envalloc $e "begin" "$r1"; e=$r1
+    call valalloc "func" funcbegin _ x
+    call envalloc "$e" begin "$x" e
+
+    eval "$1='$e'"
 }
 die () {
     echo "die: $1" 1>&2
     exit 1
 }
 main () {
-    newenv
-    local e="${r1}"
+    local e
+    call newenv e
 
     local x
     call list x
