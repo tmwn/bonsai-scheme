@@ -761,6 +761,24 @@ func_if () {
     eval1 $e $u v
     $returns e v
 }
+define2 func_cond
+_func_cond () {
+    assert_eq $# 4
+    local e=$1 v=$2 f ff fs fsf b
+    shift 2
+
+    must_pair $v f v
+    must_pair $f ff fs
+    eval1 $e $ff b
+    must_bool $b b
+    if [[ $b -ne 0 ]]; then
+        must_pair $fs fsf _
+        eval1 $e $fsf v
+    else
+        func_cond $e $v e v
+    fi
+    $returns e v
+}
 
 with_func () { call _with_func "$@"; }
 _with_func () {
@@ -798,6 +816,9 @@ default_env () {
     with_func $e "let*" func_lets   e
     with_func $e letrec func_letrec e
     with_func $e "if"   func_if     e
+    with_func $e cond   func_cond   e
+    new_bool 1 x
+    new_env $e "else" $x e
 
     $returns e
 }
