@@ -372,9 +372,9 @@ func newEnv() *Env {
 		})).
 		with("cond", newFunc(func(e *Env, v *Value) *Value {
 			for {
-				kv := v.first
-				if e.eval(kv.first).boolVal {
-					return e.eval(kv.second.first)
+				f := v.first
+				if e.eval(f.first).boolVal {
+					return e.eval(f.second.first)
 				}
 				v = v.second
 			}
