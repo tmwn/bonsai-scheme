@@ -207,6 +207,9 @@ new_pair () {
 new_func () {
     new_val "func" "$1" _ "$2"
 }
+new_symbol () {
+    new_val "symbol" "$1" _ "$2"
+}
 define2 must
 _must () {
     local want_kind="$1" v="$2" kind first second
@@ -623,13 +626,15 @@ do_eq () {
 func_eq () { op_2 do_eq "$@"; }
 
 func_define () {
+    assert_eq $# 4
     local e=$1 v=$2 kind fun_args body name symbol value args value lam lam_body
-    valdestruct $v kind fun_args body
+    shift 2
+    must_pair $v fun_args body
+    valdestruct $fun_args kind name args
     if [[ $kind == "symbol" ]]; then
         name=$fun_args
         must_pair $body value _
     else
-        must_pair $fun_args name args
         new_symbol "lambda" lam
         new_pair $args $body lam_body
         new_pair $lam $lam_body value
