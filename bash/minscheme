@@ -354,12 +354,11 @@ _evaluate_list () {
 }
 define2 op_1
 _op_1 () {
-    local f=$1 e=$2 v=$3 v_first x res
+    local f=$1 e=$2 v=$3 v_first res
     shift 3
 
     valdestruct $v _ v_first _
     eval1 $e $v_first x
-    valdestruct $x _ x _
 
     call "$f" "$x" res
     $returns e res
@@ -373,8 +372,6 @@ _op_2 () {
     valdestruct $v_second _ v_second_first _
     eval1 $e $v_first x
     eval1 $e $v_second_first y
-    valdestruct $x _ x _
-    valdestruct $y _ y _
 
     call "$f" "$x" "$y" res
     $returns e res
@@ -399,7 +396,7 @@ _op_fold () {
     $returns e x
 }
 do_print () {
-    echo "$1"
+    valshow "$1"
     shift
     $returns VALNIL
 }
@@ -411,41 +408,47 @@ func_begin () {
     $returns e retval
 }
 do_equals () {
-    local x=0 v
-    [[ "$1" -eq "$2" ]] && x=1
+    local x y res=0 v
+    valdestruct $1 _ x _
+    valdestruct $2 _ y _
     shift 2
+    [[ "$x" -eq "$y" ]] && res=1
 
-    new_bool $x v
+    new_bool $res v
     $returns v
 }
 func_equals () { op_2 do_equals "$@"; }
 do_sub () {
-    local x=$(( $1 - $2 )) v
+    local x y v
+    valdestruct $1 _ x _
+    valdestruct $2 _ y _
     shift 2
-    new_int $x v
+    new_int $(( $x - $y )) v
     $returns v
 }
 func_sub () { op_2 do_sub "$@"; }
 do_div () {
-    local x=$(( $1 / $2 )) v
+    local x y v
+    valdestruct $1 _ x _
+    valdestruct $2 _ y _
     shift 2
-    new_int $x v
+    new_int $(( $x / $y )) v
     $returns v
 }
 func_div () { op_2 do_div "$@"; }
 
 do_add () {
-    local x=$(( $1 + $2 )) v
+    local v
+    new_int $(( $1 + $2 )) v
     shift 2
-    new_int $x v
     $returns v
 }
 func_add () { op_fold do_add "$@"; }
 
 do_mul () {
-    local x=$(( $1 * $2 )) v
+    local v
+    new_int $(( $1 * $2 )) v
     shift 2
-    new_int $x v
     $returns v
 }
 func_mul () { op_fold do_mul "$@"; }
@@ -468,42 +471,47 @@ do_or () {
 }
 func_or () { op_fold do_or "$@"; }
 do_not () {
-    local x=0 v
-    [[ $1 == "#f" ]] && x=1
-    shift 1
-    new_bool $x v
-    $returns v
+    local x res=0
+    valdestruct $1 _ x _
+    shift
+    [[ "$x" == "#f" ]] && res=1
+    new_bool $res res
+    $returns res
 }
 func_not () { op_1 do_not "$@"; }
 do_lt () {
-    local x=0 v
-    [[ $1 -lt $2 ]] && x=1
+    local x y v
+    valdestruct $1 _ x _
+    valdestruct $2 _ y _
     shift 2
-    new_bool $x v
+    new_bool $(( $x < $y )) v
     $returns v
 }
 func_lt () { op_2 do_lt "$@"; }
 do_le () {
-    local x=0 v
-    [[ $1 -le $2 ]] && x=1
+    local x y v
+    valdestruct $1 _ x _
+    valdestruct $2 _ y _
     shift 2
-    new_bool $x v
+    new_bool $(( $x <= $y )) v
     $returns v
 }
 func_le () { op_2 do_le "$@"; }
 do_gt () {
-    local x=0 v
-    [[ $1 -gt $2 ]] && x=1
+    local x y v
+    valdestruct $1 _ x _
+    valdestruct $2 _ y _
     shift 2
-    new_bool $x v
+    new_bool $(( $x > $y )) v
     $returns v
 }
 func_gt () { op_2 do_gt "$@"; }
 do_ge () {
-    local x=0 v
-    [[ $1 -ge $2 ]] && x=1
+    local x y v
+    valdestruct $1 _ x _
+    valdestruct $2 _ y _
     shift 2
-    new_bool $x v
+    new_bool $(( $x >= $y )) v
     $returns v
 }
 func_ge () { op_2 do_ge "$@"; }
