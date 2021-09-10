@@ -274,16 +274,17 @@ valshow () {
     esac
     [[ -z "$nonewline" ]] && echo
 }
-val_eq () {
+define val_eq
+_val_eq () {
     local v="$1" u="$2" res=0 v_kind u_kind v_first u_first
     shift 2
     valdestruct "$v" v_kind v_first _
     valdestruct "$u" u_kind u_first _
     if [[ "$v_kind" == "$u_kind" ]]; then
-        case $kind in
+        case $v_kind in
             "nil") res=1 ;;
             "bool") [[ "$v_first" == "$u_first" ]] && res=1 ;;
-            "int") [[ "$v_first" == "$u_first" ]] && res=1 ;;
+            "int") [[ "$v_first" -eq "$u_first" ]] && res=1 ;;
             "quote") val_eq "$v_first" "$u_first" res ;;
             "symbol") [[ "$v_first" == "$u_first" ]] && res=1 ;;
         esac
@@ -595,6 +596,7 @@ do_eq () {
     local v
     val_eq "$1" "$2" v
     shift 2
+    new_bool "$v" v
     $returns v
 }
 func_eq () { op_2 do_eq "$@"; }
