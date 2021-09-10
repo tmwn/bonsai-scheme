@@ -265,6 +265,14 @@ _valdestruct () {
 
     $returns kind first second
 }
+val_set_first () {
+    local v=$1 f=$2
+    VALARENA[$(( v + 1 ))]="$f"
+}
+val_set_second () {
+    local v=$1 s=$2
+    VALARENA[$(( v + 2 ))]="$s"
+}
 valshow () {
     local nonewline="$2" kind first second
     valdestruct "$1" kind first second
@@ -360,12 +368,14 @@ _new_env () {
     $returns i
 }
 env_set () {
-    local e="$1" v="$2"
+    assert_eq $# 3
+    local e="$1" s="$2" v="$3"
+    lookup $e $s e
     ENVARENA[$(( e + 2 ))]="$v"
 }
-envdestruct () {
+define3 envdestruct
+_envdestruct () {
     assert_eq $# 4
-    [[ $1 == "e" ]] && die
     local e="$1"
     shift 1
     eval "
@@ -374,16 +384,17 @@ envdestruct () {
         $3='${ENVARENA[$(( e + 2 ))]}'
     " || die "envsectruct"
 }
-lookup () {
+define lookup
+_lookup () {
     local e="$1" s="$2" res next symbol value
     shift 2
     [[ $e == "$ENVNIL" ]] && die "not found: '$s'"
 
-    call3 envdestruct "$e" next symbol value
+    envdestruct $e next symbol _
     if [[ "$symbol" == "$s" ]]; then
-        res=$value
+        res=$e
     else
-        call lookup "$next" "$s" res
+        lookup "$next" "$s" res
     fi
     $returns res
 }
@@ -397,7 +408,7 @@ _eval1 () {
 }
 define2 eval2
 _eval2 () {
-    local e="$1" v="$2" v_kind v_first v_second u
+    local e="$1" v="$2" v_kind v_first v_second u e2
     shift 2
     valdestruct "$v" v_kind v_first v_second
     case "$v_kind" in
@@ -410,7 +421,8 @@ _eval2 () {
             must_func "$u" fun
             eval call2 "$fun" "'$e'" "'$v_second'" e v || die "eval2" ;;
         "symbol")
-            call lookup "$e" "$v_first" v ;;
+            lookup "$e" "$v_first" e2
+            envdestruct $e2 _ _ v ;;
     esac
 
     $returns e v
@@ -642,7 +654,7 @@ func_define () {
     must_symbol "$name" symbol
     new_env "$e" "$symbol" $VALNIL e
     eval1 "$e" "$value" value
-    env_set "$e" "$value"
+    env_set "$e" "$symbol" "$value"
     $returns e VALNIL
 }
 define with_lambda_env
@@ -735,7 +747,7 @@ _letrec_inner () {
     shift 4
     new_env $e $name $VALNIL e
     eval1 $e $val x
-    env_set $e $x
+    env_set $e $name $x
     $returns e
 }
 func_letrec () {
@@ -779,6 +791,39 @@ _func_cond () {
     fi
     $returns e v
 }
+func_set () {
+    assert_eq $# 4
+    local e=$1 v=$2 f fs s sf
+    shift 2
+    must_pair $v f s
+    must_symbol $f fs
+    must_pair $s sf _
+    eval1 $e $sf v
+    env_set $e $fs $v
+    $returns e VALNIL
+}
+func_set_car () {
+    assert_eq $# 4
+    local e=$1 v=$2 f s sf
+    shift 2
+    must_pair $v f s
+    must_pair $s sf _
+    eval1 $e $f f
+    eval1 $e $sf sf
+    val_set_first $f $sf
+    $returns e VALNIL
+}
+func_set_cdr () {
+    assert_eq $# 4
+    local e=$1 v=$2 f s sf
+    shift 2
+    must_pair $v f s
+    must_pair $s sf _
+    eval1 $e $f f
+    eval1 $e $sf sf
+    val_set_second $f $sf
+    $returns e VALNIL
+}
 
 with_func () { call _with_func "$@"; }
 _with_func () {
@@ -819,6 +864,9 @@ default_env () {
     with_func $e cond   func_cond   e
     new_bool 1 x
     new_env $e "else" $x e
+    with_func $e "set!"     func_set     e
+    with_func $e "set-car!" func_set_car e
+    with_func $e "set-cdr!" func_set_cdr e
 
     $returns e
 }
