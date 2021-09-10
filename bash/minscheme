@@ -3,15 +3,13 @@
 : <<'COMMENT'
 # Data structure
 
-Arenas are used to store data in referenceable form.
-
 Value arena is one dimentional array in the following form.
 
 ( type1 x1 y1 type2 x2 y2 ... )
 
-Each three consecutive data represents one value. Any value appears in the
-program is stored in the arena and always referenced by its index in the
-value arena. 0 represents the first data, 3 does the second data, and so on.
+Any value appears in the program is stored in the arena and always referenced by
+its index in the value arena. 0 represents the first data, 3 does the second
+data, and so on.
 A type is one of the following: nil, bool, int, pair, symbol, func, quote .
 A value of each type has the following form.
 
@@ -23,8 +21,8 @@ A value of each type has the following form.
 - func <func> ""
 - quote 3 ""
 
-<func> is a stringified bash script. It assumes two inputs $env and $val and
-returns the resulting environment and value.
+<func> is a stringified bash script. It should receive two inputs for
+environment and value, and return the resulting environment and value.
 
 Env arena is one dimentional array in the following form. Any environment
 appears in the program are referenced by its index in the env arena.
