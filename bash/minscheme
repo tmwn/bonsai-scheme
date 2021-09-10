@@ -71,7 +71,7 @@ are used. Example:
 Here, $returns is a shorthand for eval "$1='$res'".
 COMMENT
 
-declare code="$(cat $1))"
+code="$(cat "$1"))"
 
 MAX_CALL=5000
 call_index=0
@@ -198,20 +198,20 @@ new_int () {
     new_val "int" "$1" _ "$2"
 }
 new_pair () {
-    new_val "pair" $1 $2 $3
+    new_val "pair" "$1" "$2" "$3"
 }
 define2 must
 _must () {
     local want_kind="$1" v="$2" kind first second
     shift 2
-    valdestruct $v kind first second
-    [[ $kind == $want_kind ]] || die "got $kind want $want_kind"
+    valdestruct "$v" kind first second
+    [[ $kind == "$want_kind" ]] || die "got $kind want $want_kind"
     $returns first second
 }
 define must_bool
 _must_bool () {
     local res=1 x
-    must "bool" $1 x _
+    must "bool" "$1" x _
     shift
     [[ $x == "#f" ]] && res=0
     $returns res
@@ -219,21 +219,21 @@ _must_bool () {
 define must_int
 _must_int () {
     local x
-    must "int" $1 x _
+    must "int" "$1" x _
     shift
     $returns x
 }
 define2 must_pair
 _must_pair () {
     local x y
-    must "pair" $1 x y
+    must "pair" "$1" x y
     shift
     $returns x y
 }
 define must_func
 _must_func () {
     local x
-    valdestruct $1 a b c
+    valdestruct "$1" a b c
     must "func" "$1" x _
     shift
     $returns x
@@ -242,9 +242,9 @@ define3 valdestruct
 _valdestruct () {
     local x=$1
     shift
-    local kind="${VALARENA[$(( $x + 0 ))]}"
-    local first="${VALARENA[$(( $x + 1 ))]}"
-    local second="${VALARENA[$(( $x + 2 ))]}"
+    local kind="${VALARENA[$(( x + 0 ))]}"
+    local first="${VALARENA[$(( x + 1 ))]}"
+    local second="${VALARENA[$(( x + 2 ))]}"
 
     $returns kind first second
 }
@@ -320,8 +320,8 @@ _new_env () {
     local i="${#ENVARENA[@]}" next="$1" symbol="$2" value="$3"
     shift 3
     ENVARENA[$i]="$next"
-    ENVARENA[$(( $i + 1 ))]="$symbol"
-    ENVARENA[$(( $i + 2 ))]="$value"
+    ENVARENA[$(( i + 1 ))]="$symbol"
+    ENVARENA[$(( i + 2 ))]="$value"
 
     $returns i
 }
@@ -330,16 +330,16 @@ envdestruct () {
     shift 1
     eval "
         $1='${ENVARENA[$e]}'
-        $2='${ENVARENA[$(( $e + 1 ))]}'
-        $3='${ENVARENA[$(( $e + 2 ))]}'
+        $2='${ENVARENA[$(( e + 1 ))]}'
+        $3='${ENVARENA[$(( e + 2 ))]}'
     " || die "envsectruct"
 }
 lookup () {
     local e="$1" s="$2" res next symbol value
     shift 2
-    [[ $e == $ENVNIL ]] && die "not found: '$s'"
+    [[ $e == "$ENVNIL" ]] && die "not found: '$s'"
 
-    call3 envdestruct $e next symbol value
+    call3 envdestruct "$e" next symbol value
     if [[ "$symbol" == "$s" ]]; then
         res=$value
     else
@@ -352,31 +352,28 @@ _eval1 () {
     local e="$1" v="$2"
     shift 2
 
-    eval2 $e $v _ res
+    eval2 "$e" "$v" _ res
     $returns res
 }
 define2 eval2
 _eval2 () {
-    local e="$1" v="$2" v_kind v_first v_second u retenv retval
+    local e="$1" v="$2" v_kind v_first v_second u
     shift 2
-    valdestruct $v v_kind v_first v_second
+    valdestruct "$v" v_kind v_first v_second
     case "$v_kind" in
         "nil" | "bool" | "int")
-            retenv="$e"
-            retval="$v" ;;
+            : ;;
         "quote")
-            retenv="$e"
-            retval="$v_first" ;;
+            v="$v_first" ;;
         "pair")
             eval1 "$e" "$v_first" u
             must_func "$u" fun
-            eval call2 "'$fun'" "'$e'" "'$v_second'" retenv retval || die ;;
+            eval call2 "'$fun'" "'$e'" "'$v_second'" e v || die ;;
         "symbol")
-            call lookup "$e" "$v_first" retval
-            retenv="$e";;
+            call lookup "$e" "$v_first" v ;;
     esac
 
-    $returns retenv retval
+    $returns e v
 }
 define evaluate_list
 _evaluate_list () {
@@ -397,8 +394,8 @@ _op_1 () {
     local f=$1 e=$2 v=$3 v_first res x
     shift 3
 
-    must_pair $v v_first _
-    eval1 $e $v_first x
+    must_pair "$v" v_first _
+    eval1 "$e" "$v_first" x
 
     call "$f" "$x" res
 
@@ -409,12 +406,12 @@ _op_2 () {
     local f=$1 e=$2 v=$3 v_first v_second v_second_first x y res
     shift 3
 
-    must_pair $v v_first v_second
-    must_pair $v_second v_second_first _
+    must_pair "$v" v_first v_second
+    must_pair "$v_second" v_second_first _
 
 
-    eval1 $e $v_first x
-    eval1 $e $v_second_first y
+    eval1 "$e" "$v_first" x
+    eval1 "$e" "$v_second_first" y
 
     call "$f" "$x" "$y" res
 
@@ -426,16 +423,16 @@ _op_fold () {
     local f=$1 e=$2 v=$3 v_first v_second v_second_kind x y
     shift 3
 
-    valdestruct $v _ v_first v_second
-    valdestruct $v_second v_second_kind _ _
-    eval1 $e $v_first x
+    valdestruct "$v" _ v_first v_second
+    valdestruct "$v_second" v_second_kind _ _
+    eval1 "$e" "$v_first" x
     if [[ $v_second_kind == "nil" ]]; then
         :
     else
-        op_fold $f $e $v_second e y
-        valdestruct $x _ x _
-        valdestruct $y _ y _
-        call $f "$x" "$y" x
+        op_fold "$f" "$e" "$v_second" e y
+        valdestruct "$x" _ x _
+        valdestruct "$y" _ y _
+        call "$f" "$x" "$y" x
     fi
     $returns e x
 }
@@ -446,35 +443,35 @@ do_print () {
 }
 func_print () { op_1 do_print "$@"; }
 func_begin () {
-    local e=$1 v=$2 retval
+    local e=$1 v=$2
     shift 2
-    evaluate_list $e $v retval
-    $returns e retval
+    evaluate_list "$e" "$v" v
+    $returns e v
 }
 do_equals () {
     local x y v
-    must_int $1 x
-    must_int $2 y
+    must_int "$1" x
+    must_int "$2" y
     shift 2
-    new_bool $(( $x == $y )) v
+    new_bool $(( x == y )) v
     $returns v
 }
 func_equals () { op_2 do_equals "$@"; }
 do_sub () {
     local x y v
-    must_int $1 x
-    must_int $2 y
+    must_int "$1" x
+    must_int "$2" y
     shift 2
-    new_int $(( $x - $y )) v
+    new_int $(( x - y )) v
     $returns v
 }
 func_sub () { op_2 do_sub "$@"; }
 do_div () {
     local x y v
-    valdestruct $1 _ x _
-    valdestruct $2 _ y _
+    valdestruct "$1" _ x _
+    valdestruct "$2" _ y _
     shift 2
-    new_int $(( $x / $y )) v
+    new_int $(( x / y )) v
     $returns v
 }
 func_div () { op_2 do_div "$@"; }
@@ -514,7 +511,7 @@ do_or () {
 func_or () { op_fold do_or "$@"; }
 do_not () {
     local x res=0
-    valdestruct $1 _ x _
+    valdestruct "$1" _ x _
     shift
     [[ "$x" == "#f" ]] && res=1
     new_bool $res res
@@ -523,57 +520,57 @@ do_not () {
 func_not () { op_1 do_not "$@"; }
 do_lt () {
     local x y v
-    valdestruct $1 _ x _
-    valdestruct $2 _ y _
+    valdestruct "$1" _ x _
+    valdestruct "$2" _ y _
     shift 2
-    new_bool $(( $x < $y )) v
+    new_bool $(( x < y )) v
     $returns v
 }
 func_lt () { op_2 do_lt "$@"; }
 do_le () {
     local x y v
-    valdestruct $1 _ x _
-    valdestruct $2 _ y _
+    valdestruct "$1" _ x _
+    valdestruct "$2" _ y _
     shift 2
-    new_bool $(( $x <= $y )) v
+    new_bool $(( x <= y )) v
     $returns v
 }
 func_le () { op_2 do_le "$@"; }
 do_gt () {
     local x y v
-    valdestruct $1 _ x _
-    valdestruct $2 _ y _
+    valdestruct "$1" _ x _
+    valdestruct "$2" _ y _
     shift 2
-    new_bool $(( $x > $y )) v
+    new_bool $(( x > y )) v
     $returns v
 }
 func_gt () { op_2 do_gt "$@"; }
 do_ge () {
     local x y v
-    valdestruct $1 _ x _
-    valdestruct $2 _ y _
+    valdestruct "$1" _ x _
+    valdestruct "$2" _ y _
     shift 2
-    new_bool $(( $x >= $y )) v
+    new_bool $(( x >= y )) v
     $returns v
 }
 func_ge () { op_2 do_ge "$@"; }
 do_cons () {
     local v
-    new_pair $1 $2 v
+    new_pair "$1" "$2" v
     shift 2
     $returns v
 }
 func_cons () { op_2 do_cons "$@"; }
 do_car () {
     local v
-    must_pair $1 v _
+    must_pair "$1" v _
     shift 1
     $returns v
 }
 func_car () { op_1 do_car "$@"; }
 do_cdr () {
     local v
-    must_pair $1 _ v
+    must_pair "$1" _ v
     shift 1
     $returns v
 }
@@ -581,12 +578,12 @@ func_cdr () { op_1 do_cdr "$@"; }
 
 with_func () { call _with_func "$@"; }
 _with_func () {
-    local e=$1 symbol="$2" fun=$3 x ne
+    local e=$1 symbol="$2" fun=$3 x
     shift 3
 
-    new_val "func" $fun _ x
-    new_env "$e" "$symbol" "$x" ne
-    $returns ne
+    new_val "func" "$fun" _ x
+    new_env "$e" "$symbol" "$x" e
+    $returns e
 }
 default_env () {
     local e=$ENVNIL x
@@ -622,7 +619,7 @@ sets () {
     esac
 }
 die () {
-    log "$@: ${FUNCNAME[@]}" 1>&2
+    log "$*: ${FUNCNAME[*]}" 1>&2
     exit 1
 }
 log () {
