@@ -74,7 +74,7 @@ COMMENT
 code="$(cat "$1"))"
 
 assert_eq () {
-    [[ $1 == $2 ]] || die "$1 != $2"
+    [[ "$1" == "$2" ]] || die "$1 != $2"
 }
 
 MAX_CALL=5000
@@ -629,20 +629,20 @@ func_define () {
     assert_eq $# 4
     local e=$1 v=$2 kind fun_args body name symbol value args value lam lam_body
     shift 2
-    must_pair $v fun_args body
-    valdestruct $fun_args kind name args
+    must_pair "$v" fun_args body
+    valdestruct "$fun_args" kind name args
     if [[ $kind == "symbol" ]]; then
         name=$fun_args
-        must_pair $body value _
+        must_pair "$body" value _
     else
         new_symbol "lambda" lam
-        new_pair $args $body lam_body
-        new_pair $lam $lam_body value
+        new_pair "$args" "$body" lam_body
+        new_pair "$lam" "$lam_body" value
     fi
-    must_symbol $name symbol
-    new_env $e $symbol $VALNIL e
-    eval1 $e $value value
-    env_set $e $value
+    must_symbol "$name" symbol
+    new_env "$e" "$symbol" $VALNIL e
+    eval1 "$e" "$value" value
+    env_set "$e" "$value"
     $returns e VALNIL
 }
 define with_lambda_env
@@ -651,14 +651,14 @@ _with_lambda_env () {
     local params=$1 args=$2 e=$3 e2=$4 p_kind p_first a_first name val
     shift 4
 
-    valdestruct $params p_kind p_first params
+    valdestruct "$params" p_kind p_first params
     if [[ $p_kind != "nil" ]]; then
-        must_pair $args a_first args
+        must_pair "$args" a_first args
 
-        must_symbol $p_first name
-        eval1 $e2 $a_first val
-        new_env $e $name $val e
-        with_lambda_env $params $args $e $e2 e
+        must_symbol "$p_first" name
+        eval1 "$e2" "$a_first" val
+        new_env "$e" "$name" "$val" e
+        with_lambda_env "$params" "$args" "$e" "$e2" e
     fi
     $returns e
 }
@@ -667,9 +667,9 @@ _lambda_inner () {
     assert_eq $# 6
     local e=$1 v=$2 e2=$3 args=$4 params body
     shift 4
-    must_pair $v params body
-    with_lambda_env $params $args $e $e2 e
-    evaluate_list $e $body v
+    must_pair "$v" params body
+    with_lambda_env "$params" "$args" "$e" "$e2" e
+    evaluate_list "$e" "$body" v
     $returns e2 v
 }
 func_lambda () {
