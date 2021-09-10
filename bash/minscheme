@@ -16,7 +16,7 @@ A type is one of the following: nil, bool, int, pair, symbol, func, quote .
 A value of each type has the following form.
 
 - nil "" ""
-- bool t ""
+- bool #t ""
 - int 100 ""
 - pair 6 9
 - symbol print ""
@@ -73,7 +73,7 @@ COMMENT
 
 declare code="$(cat $1))"
 
-MAX_CALL=1000
+MAX_CALL=5000
 call_index=0
 call () {
     [[ $call_index -lt $MAX_CALL ]] || die "call_index >= $MAX_CALL"
@@ -172,7 +172,9 @@ token () {
 VALARENA=("nil" "" "")
 VALNIL=0
 
-new_val () { call _new_val "$@"; }
+define () { eval "$1 () { call _$1 \"\$@\"; }"; }
+
+define new_val
 _new_val () {
     local kind="$1" first="$2" second="$3"
     shift 3
@@ -182,6 +184,16 @@ _new_val () {
     VALARENA[$(( $i + 2 ))]="$second"
 
     $returns i
+}
+new_bool () {
+    if [[ $1 -ne 0 ]]; then
+        new_val "bool" "#t" _ $2
+    else
+        new_val "bool" "#f" _ $2
+    fi
+}
+new_int () {
+    new_val "int" $1 _ $2
 }
 valdestruct () { call3 _valdestruct "$@"; }
 _valdestruct () {
@@ -194,21 +206,20 @@ _valdestruct () {
     $returns kind first second
 }
 valshow () {
-    local nonewline="$2"
-    valdestruct "$1" kind first secon
+    local nonewline="$2" kind first second
+    valdestruct "$1" kind first second
     case "$kind" in
         "nil")
             echo -n nil;;
         "bool")
-            echo -n "#${first}";;
+            echo -n "$first";;
         "int")
-            echo -n "${first}";;
+            echo -n "$first";;
         "pair")
             echo -n "( "
-            local snd2="${second}"
             valshow "$first" 1
             echo -n " . "
-            valshow "${snd2}" 1
+            valshow "$second" 1
             echo -n " )";;
         "quote")
             echo -n "'"
@@ -243,7 +254,7 @@ value () {
         "(")
             call list res;;
         "#")
-            new_val "bool" "${x:1}" _ res
+            new_val "bool" "$x" _ res
             ;;
         '`')
             call value x
@@ -251,7 +262,7 @@ value () {
             ;;
         *)
             if [[ "$x" =~ ^-?[0-9]+$ ]]; then
-                new_val "int" "$r1" _ res
+                new_val "int" "$x" _ res
             else
                 new_val "symbol" "$x" _ res
             fi;;
@@ -340,43 +351,130 @@ _evaluate_list () {
     $returns res
 }
 op_1 () {
-    local f=$1 e=$2 v=$3 v_kind v_first x res
+    local f=$1 e=$2 v=$3 v_first x res
     shift 3
 
-    valdestruct $v v_kind v_first _
+    valdestruct $v _ v_first _
     eval1 $e $v_first x
+    valdestruct $x _ x _
 
-    "$f" "$x" res
+    call "$f" "$x" res
     $returns e res
 }
+op_2 () {
+    local f=$1 e=$2 v=$3 v_first v_second v_second_first x y res
+    shift 3
+
+    valdestruct $v _ v_first v_second
+    valdestruct $v_second _ v_second_first _
+    eval1 $e $v_first x
+    eval1 $e $v_second_first y
+    valdestruct $x _ x _
+    valdestruct $y _ y _
+
+    call "$f" "$x" "$y" res
+    $returns e res
+}
+
+define op_fold
+_op_fold () {
+    local f=$1 e=$2 v=$3 v_first v_second v_second_kind x y
+    shift 3
+
+    valdestruct $v _ v_first v_second
+    valdestruct $v_second v_second_kind _ _
+    eval1 $e $v_first x
+    if [[ $v_second_kind == "nil" ]]; then
+        :
+    else
+        op_fold $f $e $v_second e y
+        valdestruct $x _ x _
+        valdestruct $y _ y _
+        call $f "$x" "$y" x
+    fi
+    $returns e x
+}
 doprint () {
-    valshow $1
+    echo "$1"
     shift
     $returns VALNIL
 }
-funcprint () {
-    call2 op_1 doprint "$@"
-}
+funcprint () { call2 op_1 doprint "$@"; }
 funcbegin () {
     local e=$1 v=$2 retval
     shift 2
     evaluate_list $e $v retval
     $returns e retval
 }
+doequals () {
+    local x=0 v
+    [[ "$1" -eq "$2" ]] && x=1
+    shift 2
+
+    new_bool $x v
+    $returns v
+}
+funcequals () { call2 op_2 doequals "$@"; }
+dosub () {
+    local x=$(( $1 - $2 )) v
+    shift 2
+    new_int $x v
+    $returns v
+}
+funcsub () { call2 op_2 dosub "$@"; }
+dodiv () {
+    local x=$(( $1 / $2 )) v
+    shift 2
+    new_int $x v
+    $returns v
+}
+funcdiv () { call2 op_2 dodiv "$@"; }
+
+doadd () {
+    local x=$(( $1 + $2 )) v
+    shift 2
+    new_int $x v
+    $returns v
+}
+funcadd () { call2 op_fold doadd "$@"; }
+
+domul () {
+    local x=$(( $1 * $2 )) v
+    shift 2
+    new_int $x v
+    $returns v
+}
+funcmul () { call2 op_fold domul "$@"; }
+
+doand () {
+    local x=0
+    [[ $1 == "#t" ]] && [[ $2 == "#t" ]] && x=1
+    shift 2
+    new_bool $x v
+    $returns v
+}
+funcand () { call2 op_fold doand "$@"; }
+
 with_func () { call _with_func "$@"; }
 _with_func () {
-    local e=$1 symbol=$2 fun=$3 x ne
+    local e=$1 symbol="$2" fun=$3 x ne
     shift 3
 
     new_val "func" $fun _ x
-    new_env $e $symbol $x ne
+    new_env "$e" "$symbol" "$x" ne
     $returns ne
 }
 default_env () {
     local e=$ENVNIL x
 
-    with_func $e print funcprint e
-    with_func $e begin funcbegin e
+    with_func $e print funcprint  e
+    with_func $e begin funcbegin  e
+    with_func $e "="   funcequals e
+    with_func $e "-"   funcsub    e
+    with_func $e "/"   funcdiv    e
+    with_func $e '*'   funcmul    e
+    with_func $e "+"   funcadd    e
+    with_func $e "and" funcand    e
 
     $returns e
 }
