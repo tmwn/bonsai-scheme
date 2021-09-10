@@ -692,20 +692,14 @@ _sym_var_iter () {
         $f "$e" "$e2" "$name" "$val" e
         sym_var_iter $e $e2 $kvs $f e
     fi
-
     $returns e
 }
 define let_inner
 _let_inner () {
     assert_eq $# 5
-    # log "$*" "!!!!!"
     local e=$1 e2=$2 name=$3 val=$4 x
-    # log local e=$1 e2=$2 name=$3 val=$4 x "!!!!!!!!!"
-    
     shift 4
-    # log -n "!!! val = "; valshow $val
     eval1 $e2 $val x
-    # log new_env $e $name $x e "!!!!!!!1"
     new_env $e $name $x e
     $returns e
 }
@@ -714,8 +708,6 @@ func_let () {
     shift 2
     must_pair $v kvs body
     sym_var_iter $e $e $kvs let_inner e
-
-    # echo evaluate_list $e2 $body v "!!!!!!!"
     evaluate_list $e $body v
     $returns e v
 }

@@ -344,11 +344,11 @@ func newEnv() *Env {
 			})
 		})).
 		with("let", newFunc(func(e *Env, v *Value) *Value {
-			ne := e
+			e2 := e
 			symValIter(v.first, func(sym string, val *Value) {
-				ne = ne.with(sym, e.eval(val))
+				e = e.with(sym, e2.eval(val))
 			})
-			return ne.evalList(v.second)
+			return e.evalList(v.second)
 		})).
 		with("let*", newFunc(func(e *Env, v *Value) *Value {
 			symValIter(v.first, func(sym string, val *Value) {
