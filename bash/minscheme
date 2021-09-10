@@ -274,6 +274,22 @@ valshow () {
     esac
     [[ -z "$nonewline" ]] && echo
 }
+val_eq () {
+    local v="$1" u="$2" res=0 v_kind u_kind v_first u_first
+    shift 2
+    valdestruct "$v" v_kind v_first _
+    valdestruct "$u" u_kind u_first _
+    if [[ "$v_kind" == "$u_kind" ]]; then
+        case $kind in
+            "nil") res=1 ;;
+            "bool") [[ "$v_first" == "$u_first" ]] && res=1 ;;
+            "int") [[ "$v_first" == "$u_first" ]] && res=1 ;;
+            "quote") val_eq "$v_first" "$u_first" res ;;
+            "symbol") [[ "$v_first" == "$u_first" ]] && res=1 ;;
+        esac
+    fi
+    $returns res
+}
 list () {
     local x y res
     skip
@@ -575,6 +591,13 @@ do_cdr () {
     $returns v
 }
 func_cdr () { op_1 do_cdr "$@"; }
+do_eq () {
+    local v
+    val_eq "$1" "$2" v
+    shift 2
+    $returns v
+}
+func_eq () { op_2 do_eq "$@"; }
 
 with_func () { call _with_func "$@"; }
 _with_func () {
@@ -605,6 +628,7 @@ default_env () {
     with_func $e cons  func_cons   e
     with_func $e car   func_car    e
     with_func $e cdr   func_cdr    e
+    with_func $e "eq?" func_eq     e
 
     $returns e
 }
