@@ -73,6 +73,10 @@ COMMENT
 
 code="$(cat "$1"))"
 
+assert_eq () {
+    [[ $1 == $2 ]] || die "$1 != $2"
+}
+
 MAX_CALL=5000
 call_index=0
 call () {
@@ -200,6 +204,9 @@ new_int () {
 new_pair () {
     new_val "pair" "$1" "$2" "$3"
 }
+new_func () {
+    new_val "func" "$1" _ "$2"
+}
 define2 must
 _must () {
     local want_kind="$1" v="$2" kind first second
@@ -233,13 +240,20 @@ _must_pair () {
 define must_func
 _must_func () {
     local x
-    valdestruct "$1" a b c
     must "func" "$1" x _
+    shift
+    $returns x
+}
+define must_symbol
+_must_symbol () {
+    local x
+    must "symbol" "$1" x _
     shift
     $returns x
 }
 define3 valdestruct
 _valdestruct () {
+    assert_eq $# 4
     local x=$1
     shift
     local kind="${VALARENA[$(( x + 0 ))]}"
@@ -342,7 +356,13 @@ _new_env () {
 
     $returns i
 }
+env_set () {
+    local e="$1" v="$2"
+    ENVARENA[$(( e + 2 ))]="$v"
+}
 envdestruct () {
+    assert_eq $# 4
+    [[ $1 == "e" ]] && die
     local e="$1"
     shift 1
     eval "
@@ -385,7 +405,7 @@ _eval2 () {
         "pair")
             eval1 "$e" "$v_first" u
             must_func "$u" fun
-            eval call2 "'$fun'" "'$e'" "'$v_second'" e v || die ;;
+            eval call2 "$fun" "'$e'" "'$v_second'" e v || die "eval2" ;;
         "symbol")
             call lookup "$e" "$v_first" v ;;
     esac
@@ -394,6 +414,7 @@ _eval2 () {
 }
 define evaluate_list
 _evaluate_list () {
+    assert_eq $# 3
     local e=$1 v=$2 v_kind v_first v_second v_second_kind res
     shift 2
     valdestruct "$v" v_kind v_first v_second
@@ -601,9 +622,61 @@ do_eq () {
 }
 func_eq () { op_2 do_eq "$@"; }
 
+func_define () {
+    local e=$1 v=$2 kind fun_args body name symbol value args value lam lam_body
+    valdestruct $v kind fun_args body
+    if [[ $kind == "symbol" ]]; then
+        name=$fun_args
+        must_pair $body value _
+    else
+        must_pair $fun_args name args
+        new_symbol "lambda" lam
+        new_pair $args $body lam_body
+        new_pair $lam $lam_body value
+    fi
+    must_symbol $name symbol
+    new_env $e $symbol $VALNIL e
+    eval1 $e $value value
+    env_set $e $value
+    $returns e VALNIL
+}
+define with_lambda_env
+_with_lambda_env () {
+    assert_eq $# 5
+    local params=$1 args=$2 e=$3 e2=$4 p_kind p_first a_first name val
+    shift 4
+
+    valdestruct $params p_kind p_first params
+    if [[ $p_kind != "nil" ]]; then
+        must_pair $args a_first args
+
+        must_symbol $p_first name
+        eval1 $e2 $a_first val
+        new_env $e $name $val e
+        with_lambda_env $params $args $e $e2 e
+    fi
+    $returns e
+}
+define2 lambda_inner
+_lambda_inner () {
+    assert_eq $# 6
+    local e=$1 v=$2 e2=$3 args=$4 params body
+    shift 4
+    must_pair $v params body
+    with_lambda_env $params $args $e $e2 e
+    evaluate_list $e $body v
+    $returns e2 v
+}
+func_lambda () {
+    local e=$1 v=$2
+    shift 2
+    new_func "lambda_inner $e $v" v
+    $returns e v
+}
+
 with_func () { call _with_func "$@"; }
 _with_func () {
-    local e=$1 symbol="$2" fun=$3 x
+    local e=$1 symbol="$2" fun="$3" x
     shift 3
 
     new_val "func" "$fun" _ x
@@ -613,24 +686,26 @@ _with_func () {
 default_env () {
     local e=$ENVNIL x
 
-    with_func $e print func_print  e
-    with_func $e begin func_begin  e
-    with_func $e "="   func_equals e
-    with_func $e "-"   func_sub    e
-    with_func $e "/"   func_div    e
-    with_func $e '*'   func_mul    e
-    with_func $e "+"   func_add    e
-    with_func $e and   func_and    e
-    with_func $e or    func_or     e
-    with_func $e not   func_not    e
-    with_func $e "<"   func_lt     e
-    with_func $e "<="  func_le     e
-    with_func $e ">"   func_gt     e
-    with_func $e ">="  func_ge     e
-    with_func $e cons  func_cons   e
-    with_func $e car   func_car    e
-    with_func $e cdr   func_cdr    e
-    with_func $e "eq?" func_eq     e
+    with_func $e print  func_print  e
+    with_func $e begin  func_begin  e
+    with_func $e "="    func_equals e
+    with_func $e "-"    func_sub    e
+    with_func $e "/"    func_div    e
+    with_func $e '*'    func_mul    e
+    with_func $e "+"    func_add    e
+    with_func $e and    func_and    e
+    with_func $e or     func_or     e
+    with_func $e not    func_not    e
+    with_func $e "<"    func_lt     e
+    with_func $e "<="   func_le     e
+    with_func $e ">"    func_gt     e
+    with_func $e ">="   func_ge     e
+    with_func $e cons   func_cons   e
+    with_func $e car    func_car    e
+    with_func $e cdr    func_cdr    e
+    with_func $e "eq?"  func_eq     e
+    with_func $e define func_define e
+    with_func $e lambda func_lambda e
 
     $returns e
 }
