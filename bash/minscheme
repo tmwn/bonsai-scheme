@@ -173,6 +173,8 @@ VALARENA=("nil" "" "")
 VALNIL=0
 
 define () { eval "$1 () { call _$1 \"\$@\"; }"; }
+define2 () { eval "$1 () { call2 _$1 \"\$@\"; }"; }
+define3 () { eval "$1 () { call3 _$1 \"\$@\"; }"; }
 
 define new_val
 _new_val () {
@@ -195,7 +197,7 @@ new_bool () {
 new_int () {
     new_val "int" $1 _ $2
 }
-valdestruct () { call3 _valdestruct "$@"; }
+define3 valdestruct
 _valdestruct () {
     local x=$1
     shift
@@ -272,7 +274,7 @@ value () {
 }
 ENVNIL="-1"
 ENVARENA=()
-new_env() { call _new_env "$@"; }
+define new_env
 _new_env () {
     local i="${#ENVARENA[@]}" next="$1" symbol="$2" value="$3"
     shift 3
@@ -304,7 +306,7 @@ lookup () {
     fi
     $returns res
 }
-eval1 () { call _eval1 "$@"; }
+define eval1
 _eval1 () {
     local e="$1" v="$2"
     shift 2
@@ -312,7 +314,7 @@ _eval1 () {
     eval2 $e $v _ res
     $returns res
 }
-eval2 () { call2 _eval2 "$@"; }
+define2 eval2
 _eval2 () {
     local e="$1" v="$2" v_kind v_first v_second u retenv retval
     shift 2
@@ -336,7 +338,7 @@ _eval2 () {
 
     $returns retenv retval
 }
-evaluate_list () { call _evaluate_list "$@"; }
+define evaluate_list
 _evaluate_list () {
     local e=$1 v=$2 v_kind v_first v_second v_second_kind res
     shift 2
@@ -350,7 +352,8 @@ _evaluate_list () {
     fi
     $returns res
 }
-op_1 () {
+define2 op_1
+_op_1 () {
     local f=$1 e=$2 v=$3 v_first x res
     shift 3
 
@@ -361,7 +364,8 @@ op_1 () {
     call "$f" "$x" res
     $returns e res
 }
-op_2 () {
+define2 op_2
+_op_2 () {
     local f=$1 e=$2 v=$3 v_first v_second v_second_first x y res
     shift 3
 
@@ -376,7 +380,7 @@ op_2 () {
     $returns e res
 }
 
-define op_fold
+define2 op_fold
 _op_fold () {
     local f=$1 e=$2 v=$3 v_first v_second v_second_kind x y
     shift 3
@@ -394,19 +398,19 @@ _op_fold () {
     fi
     $returns e x
 }
-doprint () {
+do_print () {
     echo "$1"
     shift
     $returns VALNIL
 }
-funcprint () { call2 op_1 doprint "$@"; }
-funcbegin () {
+func_print () { op_1 do_print "$@"; }
+func_begin () {
     local e=$1 v=$2 retval
     shift 2
     evaluate_list $e $v retval
     $returns e retval
 }
-doequals () {
+do_equals () {
     local x=0 v
     [[ "$1" -eq "$2" ]] && x=1
     shift 2
@@ -414,46 +418,95 @@ doequals () {
     new_bool $x v
     $returns v
 }
-funcequals () { call2 op_2 doequals "$@"; }
-dosub () {
+func_equals () { op_2 do_equals "$@"; }
+do_sub () {
     local x=$(( $1 - $2 )) v
     shift 2
     new_int $x v
     $returns v
 }
-funcsub () { call2 op_2 dosub "$@"; }
-dodiv () {
+func_sub () { op_2 do_sub "$@"; }
+do_div () {
     local x=$(( $1 / $2 )) v
     shift 2
     new_int $x v
     $returns v
 }
-funcdiv () { call2 op_2 dodiv "$@"; }
+func_div () { op_2 do_div "$@"; }
 
-doadd () {
+do_add () {
     local x=$(( $1 + $2 )) v
     shift 2
     new_int $x v
     $returns v
 }
-funcadd () { call2 op_fold doadd "$@"; }
+func_add () { op_fold do_add "$@"; }
 
-domul () {
+do_mul () {
     local x=$(( $1 * $2 )) v
     shift 2
     new_int $x v
     $returns v
 }
-funcmul () { call2 op_fold domul "$@"; }
+func_mul () { op_fold do_mul "$@"; }
 
-doand () {
-    local x=0
-    [[ $1 == "#t" ]] && [[ $2 == "#t" ]] && x=1
+do_and () {
+    local x=1 v
+    [[ $1 == "#f" ]] || [[ $2 == "#f" ]] && x=0
     shift 2
     new_bool $x v
     $returns v
 }
-funcand () { call2 op_fold doand "$@"; }
+func_and () { op_fold do_and "$@"; }
+
+do_or () {
+    local x=1 v
+    [[ $1 == "#f" ]] && [[ $2 == "#f" ]] && x=0
+    shift 2
+    new_bool $x v
+    $returns v
+}
+func_or () { op_fold do_or "$@"; }
+do_not () {
+    local x=0 v
+    [[ $1 == "#f" ]] && x=1
+    shift 1
+    new_bool $x v
+    $returns v
+}
+func_not () { op_1 do_not "$@"; }
+do_lt () {
+    local x=0 v
+    [[ $1 -lt $2 ]] && x=1
+    shift 2
+    new_bool $x v
+    $returns v
+}
+func_lt () { op_2 do_lt "$@"; }
+do_le () {
+    local x=0 v
+    [[ $1 -le $2 ]] && x=1
+    shift 2
+    new_bool $x v
+    $returns v
+}
+func_le () { op_2 do_le "$@"; }
+do_gt () {
+    local x=0 v
+    [[ $1 -gt $2 ]] && x=1
+    shift 2
+    new_bool $x v
+    $returns v
+}
+func_gt () { op_2 do_gt "$@"; }
+do_ge () {
+    local x=0 v
+    [[ $1 -ge $2 ]] && x=1
+    shift 2
+    new_bool $x v
+    $returns v
+}
+func_ge () { op_2 do_ge "$@"; }
 
 with_func () { call _with_func "$@"; }
 _with_func () {
@@ -467,14 +520,20 @@ _with_func () {
 default_env () {
     local e=$ENVNIL x
 
-    with_func $e print funcprint  e
-    with_func $e begin funcbegin  e
-    with_func $e "="   funcequals e
-    with_func $e "-"   funcsub    e
-    with_func $e "/"   funcdiv    e
-    with_func $e '*'   funcmul    e
-    with_func $e "+"   funcadd    e
-    with_func $e "and" funcand    e
+    with_func $e print func_print  e
+    with_func $e begin func_begin  e
+    with_func $e "="   func_equals e
+    with_func $e "-"   func_sub    e
+    with_func $e "/"   func_div    e
+    with_func $e '*'   func_mul    e
+    with_func $e "+"   func_add    e
+    with_func $e and   func_and    e
+    with_func $e or    func_or     e
+    with_func $e not   func_not    e
+    with_func $e "<"   func_lt     e
+    with_func $e "<="  func_le     e
+    with_func $e ">"   func_gt     e
+    with_func $e ">="  func_ge     e
 
     $returns e
 }
