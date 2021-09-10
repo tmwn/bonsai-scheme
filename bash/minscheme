@@ -678,6 +678,47 @@ func_lambda () {
     new_func "lambda_inner $e $v" v
     $returns e v
 }
+define sym_var_iter
+_sym_var_iter () {
+    assert_eq $# 5
+    local e="$1" e2="$2" kvs="$3" f="$4" kind kv sym name val
+    shift 4
+
+    valdestruct $kvs kind kv kvs
+    if [[ $kind != "nil" ]]; then
+        must_pair $kv sym val
+        must_pair $val val _
+        must_symbol $sym name
+        $f "$e" "$e2" "$name" "$val" e
+        sym_var_iter $e $e2 $kvs $f e
+    fi
+
+    $returns e
+}
+define let_inner
+_let_inner () {
+    assert_eq $# 5
+    # log "$*" "!!!!!"
+    local e=$1 e2=$2 name=$3 val=$4 x
+    # log local e=$1 e2=$2 name=$3 val=$4 x "!!!!!!!!!"
+    
+    shift 4
+    # log -n "!!! val = "; valshow $val
+    eval1 $e2 $val x
+    # log new_env $e $name $x e "!!!!!!!1"
+    new_env $e $name $x e
+    $returns e
+}
+func_let () {
+    local e=$1 v=$2 kvs body
+    shift 2
+    must_pair $v kvs body
+    sym_var_iter $e $e $kvs let_inner e
+
+    # echo evaluate_list $e2 $body v "!!!!!!!"
+    evaluate_list $e $body v
+    $returns e v
+}
 
 with_func () { call _with_func "$@"; }
 _with_func () {
@@ -711,6 +752,9 @@ default_env () {
     with_func $e "eq?"  func_eq     e
     with_func $e define func_define e
     with_func $e lambda func_lambda e
+    with_func $e "let"  func_let    e
+    with_func $e "let*" func_lets   e
+    with_func $e letrec func_letrec e
 
     $returns e
 }
