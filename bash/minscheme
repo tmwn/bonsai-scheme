@@ -77,7 +77,7 @@ assert_eq () {
     [[ "$1" == "$2" ]] || die "$1 != $2"
 }
 
-MAX_CALL=5000
+MAX_CALL=50000
 call_index=0
 call () {
     [[ $call_index -lt $MAX_CALL ]] || die "call_index >= $MAX_CALL"
@@ -711,6 +711,56 @@ func_let () {
     evaluate_list $e $body v
     $returns e v
 }
+define lets_inner
+_lets_inner () {
+    assert_eq $# 5
+    local e=$1 e2=$2 name=$3 val=$4 x
+    shift 4
+    eval1 $e $val x
+    new_env $e $name $x e
+    $returns e
+}
+func_lets () {
+    local e=$1 v=$2 kvs body
+    shift 2
+    must_pair $v kvs body
+    sym_var_iter $e $e $kvs lets_inner e
+    evaluate_list $e $body v
+    $returns e v
+}
+define letrec_inner
+_letrec_inner () {
+    assert_eq $# 5
+    local e=$1 e2=$2 name=$3 val=$4 x
+    shift 4
+    new_env $e $name $VALNIL e
+    eval1 $e $val x
+    env_set $e $x
+    $returns e
+}
+func_letrec () {
+    local e=$1 v=$2 kvs body
+    shift 2
+    must_pair $v kvs body
+    sym_var_iter $e $e $kvs letrec_inner e
+    evaluate_list $e $body v
+    $returns e v
+}
+func_if () {
+    local e=$1 v=$2 f s sf ss ssf u b
+    shift 2
+    must_pair $v f s
+    must_pair $s sf ss
+    must_pair $ss ssf _
+
+    u="$sf"
+    eval1 $e $f v
+    must_bool $v b
+    [[ $b -eq 0 ]] && u="$ssf"
+
+    eval1 $e $u v
+    $returns e v
+}
 
 with_func () { call _with_func "$@"; }
 _with_func () {
@@ -747,6 +797,7 @@ default_env () {
     with_func $e "let"  func_let    e
     with_func $e "let*" func_lets   e
     with_func $e letrec func_letrec e
+    with_func $e "if"   func_if     e
 
     $returns e
 }
