@@ -366,7 +366,7 @@ _new_env () {
 env_set () {
     assert_eq $# 3
     local e="$1" s="$2" v="$3"
-    lookup $e $s e
+    lookup "$e" "$s" e
     ENVARENA[$(( e + 2 ))]="$v"
 }
 define3 envdestruct
@@ -386,7 +386,7 @@ _lookup () {
     shift 2
     [[ $e == "$ENVNIL" ]] && die "not found: '$s'"
 
-    envdestruct $e next symbol _
+    envdestruct "$e" next symbol _
     if [[ "$symbol" == "$s" ]]; then
         res=$e
     else
@@ -418,7 +418,7 @@ _eval2 () {
             eval call2 "$fun" "'$e'" "'$v_second'" e v || die "eval2" ;;
         "symbol")
             lookup "$e" "$v_first" e2
-            envdestruct $e2 _ _ v ;;
+            envdestruct "$e2" _ _ v ;;
     esac
 
     $returns e v
@@ -692,13 +692,13 @@ _sym_var_iter () {
     local e="$1" e2="$2" kvs="$3" f="$4" kind kv sym name val
     shift 4
 
-    valdestruct $kvs kind kv kvs
+    valdestruct "$kvs" kind kv kvs
     if [[ $kind != "nil" ]]; then
-        must_pair $kv sym val
-        must_pair $val val _
-        must_symbol $sym name
+        must_pair "$kv" sym val
+        must_pair "$val" val _
+        must_symbol "$sym" name
         $f "$e" "$e2" "$name" "$val" e
-        sym_var_iter $e $e2 $kvs $f e
+        sym_var_iter "$e" "$e2" "$kvs" "$f" e
     fi
     $returns e
 }
@@ -707,16 +707,16 @@ _let_inner () {
     assert_eq $# 5
     local e=$1 e2=$2 name=$3 val=$4 x
     shift 4
-    eval1 $e2 $val x
-    new_env $e $name $x e
+    eval1 "$e2" "$val" x
+    new_env "$e" "$name" $x e
     $returns e
 }
 func_let () {
     local e=$1 v=$2 kvs body
     shift 2
-    must_pair $v kvs body
-    sym_var_iter $e $e $kvs let_inner e
-    evaluate_list $e $body v
+    must_pair "$v" kvs body
+    sym_var_iter "$e" "$e" "$kvs" let_inner e
+    evaluate_list "$e" "$body" v
     $returns e v
 }
 define lets_inner
@@ -724,16 +724,16 @@ _lets_inner () {
     assert_eq $# 5
     local e=$1 e2=$2 name=$3 val=$4 x
     shift 4
-    eval1 $e $val x
-    new_env $e $name $x e
+    eval1 "$e" "$val" x
+    new_env "$e" "$name" "$x" e
     $returns e
 }
 func_lets () {
     local e=$1 v=$2 kvs body
     shift 2
-    must_pair $v kvs body
-    sym_var_iter $e $e $kvs lets_inner e
-    evaluate_list $e $body v
+    must_pair "$v" kvs body
+    sym_var_iter "$e" "$e" "$kvs" lets_inner e
+    evaluate_list "$e" "$body" v
     $returns e v
 }
 define letrec_inner
@@ -741,32 +741,32 @@ _letrec_inner () {
     assert_eq $# 5
     local e=$1 e2=$2 name=$3 val=$4 x
     shift 4
-    new_env $e $name $VALNIL e
-    eval1 $e $val x
-    env_set $e $name $x
+    new_env "$e" "$name" $VALNIL e
+    eval1 "$e" "$val" x
+    env_set "$e" "$name" $x
     $returns e
 }
 func_letrec () {
     local e=$1 v=$2 kvs body
     shift 2
-    must_pair $v kvs body
-    sym_var_iter $e $e $kvs letrec_inner e
-    evaluate_list $e $body v
+    must_pair "$v" kvs body
+    sym_var_iter "$e" "$e" "$kvs" letrec_inner e
+    evaluate_list "$e" "$body" v
     $returns e v
 }
 func_if () {
     local e=$1 v=$2 f s sf ss ssf u b
     shift 2
-    must_pair $v f s
-    must_pair $s sf ss
-    must_pair $ss ssf _
+    must_pair "$v" f s
+    must_pair "$s" sf ss
+    must_pair "$ss" ssf _
 
     u="$sf"
-    eval1 $e $f v
-    must_bool $v b
+    eval1 "$e" "$f" v
+    must_bool "$v" b
     [[ $b -eq 0 ]] && u="$ssf"
 
-    eval1 $e $u v
+    eval1 "$e" "$u" v
     $returns e v
 }
 define2 func_cond
@@ -775,15 +775,15 @@ _func_cond () {
     local e=$1 v=$2 f ff fs fsf b
     shift 2
 
-    must_pair $v f v
-    must_pair $f ff fs
-    eval1 $e $ff b
-    must_bool $b b
+    must_pair "$v" f v
+    must_pair "$f" ff fs
+    eval1 "$e" "$ff" b
+    must_bool "$b" b
     if [[ $b -ne 0 ]]; then
-        must_pair $fs fsf _
-        eval1 $e $fsf v
+        must_pair "$fs" fsf _
+        eval1 "$e" "$fsf" v
     else
-        func_cond $e $v e v
+        func_cond "$e" "$v" e v
     fi
     $returns e v
 }
@@ -791,33 +791,33 @@ func_set () {
     assert_eq $# 4
     local e=$1 v=$2 f fs s sf
     shift 2
-    must_pair $v f s
-    must_symbol $f fs
-    must_pair $s sf _
-    eval1 $e $sf v
-    env_set $e $fs $v
+    must_pair "$v" f s
+    must_symbol "$f" fs
+    must_pair "$s" sf _
+    eval1 "$e" "$sf" v
+    env_set "$e" "$fs" "$v"
     $returns e VALNIL
 }
 func_set_car () {
     assert_eq $# 4
     local e=$1 v=$2 f s sf
     shift 2
-    must_pair $v f s
-    must_pair $s sf _
-    eval1 $e $f f
-    eval1 $e $sf sf
-    val_set_first $f $sf
+    must_pair "$v" f s
+    must_pair "$s" sf _
+    eval1 "$e" "$f" f
+    eval1 "$e" "$sf" sf
+    val_set_first "$f" "$sf"
     $returns e VALNIL
 }
 func_set_cdr () {
     assert_eq $# 4
     local e=$1 v=$2 f s sf
     shift 2
-    must_pair $v f s
-    must_pair $s sf _
-    eval1 $e $f f
-    eval1 $e $sf sf
-    val_set_second $f $sf
+    must_pair "$v" f s
+    must_pair "$s" sf _
+    eval1 "$e" "$f" f
+    eval1 "$e" "$sf" sf
+    val_set_second "$f" "$sf"
     $returns e VALNIL
 }
 
