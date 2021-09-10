@@ -77,10 +77,8 @@ assert_eq () {
     [[ "$1" == "$2" ]] || die "$1 != $2"
 }
 
-MAX_CALL=500000
 call_index=0
 call () {
-    [[ $call_index -lt $MAX_CALL ]] || die "call_index >= $MAX_CALL"
     # use long name not to collide with return value names
     local call_variable_name="call_variable$(( call_index += 1 ))"
     local call_all_args=( "$@" )
@@ -90,7 +88,6 @@ call () {
     eval "$call_real_name='${!call_variable_name}'" || die "call"
 }
 call2 () {
-    [[ $call_index -lt $MAX_CALL ]] || die "call_index >= $MAX_CALL"
     local call_variable_name1="call_variable$(( call_index += 1 ))"
     local call_variable_name2="call_variable$(( call_index += 1 ))"
     local call_all_args=( "$@" )
@@ -105,7 +102,6 @@ call2 () {
     " || die "call2"
 }
 call3 () {
-    [[ $call_index -lt $MAX_CALL ]] || die "call_index >= $MAX_CALL"
     local call_variable_name1="call_variable$(( call_index += 1 ))"
     local call_variable_name2="call_variable$(( call_index += 1 ))"
     local call_variable_name3="call_variable$(( call_index += 1 ))"
