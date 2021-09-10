@@ -182,20 +182,61 @@ _new_val () {
     shift 3
     local i=${#VALARENA[*]}
     VALARENA[$i]="$kind"
-    VALARENA[$(( $i + 1 ))]="$first"
-    VALARENA[$(( $i + 2 ))]="$second"
+    VALARENA[$(( i + 1 ))]="$first"
+    VALARENA[$(( i + 2 ))]="$second"
 
     $returns i
 }
 new_bool () {
     if [[ $1 -ne 0 ]]; then
-        new_val "bool" "#t" _ $2
+        new_val "bool" "#t" _ "$2"
     else
-        new_val "bool" "#f" _ $2
+        new_val "bool" "#f" _ "$2"
     fi
 }
 new_int () {
-    new_val "int" $1 _ $2
+    new_val "int" "$1" _ "$2"
+}
+new_pair () {
+    new_val "pair" $1 $2 $3
+}
+define2 must
+_must () {
+    local want_kind="$1" v="$2" kind first second
+    shift 2
+    valdestruct $v kind first second
+    [[ $kind == $want_kind ]] || die "got $kind want $want_kind"
+    $returns first second
+}
+define must_bool
+_must_bool () {
+    local res=1 x
+    must "bool" $1 x _
+    shift
+    [[ $x == "#f" ]] && res=0
+    $returns res
+}
+define must_int
+_must_int () {
+    local x
+    must "int" $1 x _
+    shift
+    $returns x
+}
+define2 must_pair
+_must_pair () {
+    local x y
+    must "pair" $1 x y
+    shift
+    $returns x y
+}
+define must_func
+_must_func () {
+    local x
+    valdestruct $1 a b c
+    must "func" "$1" x _
+    shift
+    $returns x
 }
 define3 valdestruct
 _valdestruct () {
@@ -328,8 +369,7 @@ _eval2 () {
             retval="$v_first" ;;
         "pair")
             eval1 "$e" "$v_first" u
-            valdestruct "$u" kind fun _
-            [[ $kind == "func" ]] || die "$kind"
+            must_func "$u" fun
             eval call2 "'$fun'" "'$e'" "'$v_second'" retenv retval || die ;;
         "symbol")
             call lookup "$e" "$v_first" retval
@@ -354,13 +394,14 @@ _evaluate_list () {
 }
 define2 op_1
 _op_1 () {
-    local f=$1 e=$2 v=$3 v_first res
+    local f=$1 e=$2 v=$3 v_first res x
     shift 3
 
-    valdestruct $v _ v_first _
+    must_pair $v v_first _
     eval1 $e $v_first x
 
     call "$f" "$x" res
+
     $returns e res
 }
 define2 op_2
@@ -368,12 +409,15 @@ _op_2 () {
     local f=$1 e=$2 v=$3 v_first v_second v_second_first x y res
     shift 3
 
-    valdestruct $v _ v_first v_second
-    valdestruct $v_second _ v_second_first _
+    must_pair $v v_first v_second
+    must_pair $v_second v_second_first _
+
+
     eval1 $e $v_first x
     eval1 $e $v_second_first y
 
     call "$f" "$x" "$y" res
+
     $returns e res
 }
 
@@ -408,20 +452,18 @@ func_begin () {
     $returns e retval
 }
 do_equals () {
-    local x y res=0 v
-    valdestruct $1 _ x _
-    valdestruct $2 _ y _
+    local x y v
+    must_int $1 x
+    must_int $2 y
     shift 2
-    [[ "$x" -eq "$y" ]] && res=1
-
-    new_bool $res v
+    new_bool $(( $x == $y )) v
     $returns v
 }
 func_equals () { op_2 do_equals "$@"; }
 do_sub () {
     local x y v
-    valdestruct $1 _ x _
-    valdestruct $2 _ y _
+    must_int $1 x
+    must_int $2 y
     shift 2
     new_int $(( $x - $y )) v
     $returns v
@@ -515,6 +557,27 @@ do_ge () {
     $returns v
 }
 func_ge () { op_2 do_ge "$@"; }
+do_cons () {
+    local v
+    new_pair $1 $2 v
+    shift 2
+    $returns v
+}
+func_cons () { op_2 do_cons "$@"; }
+do_car () {
+    local v
+    must_pair $1 v _
+    shift 1
+    $returns v
+}
+func_car () { op_1 do_car "$@"; }
+do_cdr () {
+    local v
+    must_pair $1 _ v
+    shift 1
+    $returns v
+}
+func_cdr () { op_1 do_cdr "$@"; }
 
 with_func () { call _with_func "$@"; }
 _with_func () {
@@ -542,6 +605,9 @@ default_env () {
     with_func $e "<="  func_le     e
     with_func $e ">"   func_gt     e
     with_func $e ">="  func_ge     e
+    with_func $e cons  func_cons   e
+    with_func $e car   func_car    e
+    with_func $e cdr   func_cdr    e
 
     $returns e
 }
