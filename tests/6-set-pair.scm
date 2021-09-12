@@ -1,0 +1,1 @@
+../nya3jp-bonsai-scheme/tests/6-set-pair.scm
