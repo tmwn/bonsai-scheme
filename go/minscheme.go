@@ -221,6 +221,16 @@ func (e *Env) with(symbol string, value *Value) *Env {
 	}
 }
 
+func (e *Env) add(symbol string, value *Value) {
+	e.next = &Env{
+		symbol: e.symbol,
+		value:  e.value,
+		next:   e.next,
+	}
+	e.symbol = symbol
+	e.value = value
+}
+
 func (e *Env) withOp1(symbol string, f func(x *Value) *Value) *Env {
 	return e.with(symbol, newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
@@ -329,7 +339,7 @@ func newEnv() *Env {
 					),
 				)
 			}
-			e = e.with(name.symbol, nil)
+			e.add(name.symbol, nil)
 			e.value = e.eval(value)
 			return e, newNone()
 		})).
