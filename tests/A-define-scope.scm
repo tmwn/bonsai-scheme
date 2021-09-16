@@ -1,18 +1,18 @@
 (define x 1)
 
-(define (f) (+ 1 x))
+(define (f) (+ 0 x))
 (define (g) x)
+(define y x)
 
 (begin
-    (define x 3)
+    (define x 10)
     1
 )
 
 (define (h) (begin
-    (define x 9)
+    (define x 100)
     1
 ))
 (h)
 
-(print (= 7 (+ (f) (g))))
-(print (+ (f) (g)))
+(print (= 21 (+ (f) (g) y)))
