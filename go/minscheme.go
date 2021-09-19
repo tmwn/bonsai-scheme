@@ -15,9 +15,52 @@ func main() {
 	}
 	tokenize(string(code))
 
-	l := list()
+	newEnv().evalList(list())
+}
 
-	newEnv().evalList(l)
+func tokenize(code string) { // update tokens
+	s := regexp.MustCompile(`([()'])`).ReplaceAllString(code, " $1 ")
+	for _, x := range regexp.MustCompile(`\s+`).Split(s, -1) {
+		if x != "" {
+			tokens = append(tokens, x)
+		}
+	}
+}
+
+var tokens []string
+
+func token() string {
+	res := tokens[0]
+	tokens = tokens[1:]
+	return res
+}
+
+func list() *Value {
+	if len(tokens) == 0 || tokens[0] == ")" {
+		return newNone()
+	}
+	return newPair(value(), list())
+}
+
+func value() *Value {
+	t := token()
+	if t == "(" {
+		res := list()
+		token() // skip )
+		return res
+	} else if t[0] == '#' {
+		return newBool(t[1] == 't')
+	} else if t == "'" {
+		return newQuote(value())
+	} else if '0' <= t[0] && t[0] <= '9' || t[0] == '-' && len(t) > 1 {
+		i, err := strconv.Atoi(t)
+		if err != nil {
+			panic(err)
+		}
+		return newInt(i)
+	} else {
+		return newSymbol(t)
+	}
 }
 
 type Kind int
@@ -32,8 +75,6 @@ const (
 	KindQuote
 )
 
-type Func func(e *Env, v *Value) *Value
-
 type Value struct {
 	kind    Kind
 	first   *Value // Pair
@@ -41,17 +82,17 @@ type Value struct {
 	symbol  string
 	boolVal bool
 	intVal  int
-	fun     Func
+	fun     func(*Env, *Value) *Value
 	quoted  *Value
 }
 
-func newNone() *Value            { return &Value{kind: KindNone} }
-func newBool(x bool) *Value      { return &Value{kind: KindBool, boolVal: x} }
-func newInt(x int) *Value        { return &Value{kind: KindInt, intVal: x} }
-func newPair(x, y *Value) *Value { return &Value{kind: KindPair, first: x, second: y} }
-func newSymbol(x string) *Value  { return &Value{kind: KindSymbol, symbol: x} }
-func newFunc(f Func) *Value      { return &Value{kind: KindFunc, fun: f} }
-func newQuote(x *Value) *Value   { return &Value{kind: KindQuote, quoted: x} }
+func newNone() *Value                            { return &Value{kind: KindNone} }
+func newBool(x bool) *Value                      { return &Value{kind: KindBool, boolVal: x} }
+func newInt(x int) *Value                        { return &Value{kind: KindInt, intVal: x} }
+func newPair(x, y *Value) *Value                 { return &Value{kind: KindPair, first: x, second: y} }
+func newSymbol(x string) *Value                  { return &Value{kind: KindSymbol, symbol: x} }
+func newFunc(f func(*Env, *Value) *Value) *Value { return &Value{kind: KindFunc, fun: f} }
+func newQuote(x *Value) *Value                   { return &Value{kind: KindQuote, quoted: x} }
 
 func (v *Value) String() string {
 	switch v.kind {
@@ -104,51 +145,6 @@ func (v *Value) eq(u *Value) bool {
 	return false
 }
 
-func tokenize(code string) { // update tokens
-	s := regexp.MustCompile(`([()'])`).ReplaceAllString(code, " $1 ")
-	for _, x := range regexp.MustCompile(`\s+`).Split(s, -1) {
-		if x != "" {
-			tokens = append(tokens, x)
-		}
-	}
-}
-
-var tokens []string
-
-func token() string {
-	res := tokens[0]
-	tokens = tokens[1:]
-	return res
-}
-
-func list() *Value {
-	if len(tokens) == 0 || tokens[0] == ")" {
-		return newNone()
-	}
-	return newPair(value(), list())
-}
-
-func value() *Value {
-	t := token()
-	if t == "(" {
-		res := list()
-		token() // skip )
-		return res
-	} else if t[0] == '#' {
-		return newBool(t[1] == 't')
-	} else if t == "'" {
-		return newQuote(value())
-	} else if '0' <= t[0] && t[0] <= '9' || t[0] == '-' && len(t) > 1 {
-		i, err := strconv.Atoi(t)
-		if err != nil {
-			panic(err)
-		}
-		return newInt(i)
-	} else {
-		return newSymbol(t)
-	}
-}
-
 type Env struct {
 	symbol    string
 	value     *Value
@@ -157,9 +153,6 @@ type Env struct {
 }
 
 func (e *Env) lookup(s string) *Value {
-	if e == nil {
-		panic("lookup: " + s)
-	}
 	if e.symbol == s {
 		return e.value
 	}
@@ -170,9 +163,6 @@ func (e *Env) lookup(s string) *Value {
 }
 
 func (e *Env) set(s string, v *Value) {
-	if e == nil {
-		panic("set: " + s)
-	}
 	if e.symbol == s {
 		e.value = v
 		return
@@ -185,9 +175,6 @@ func (e *Env) set(s string, v *Value) {
 }
 
 func (e *Env) ensure(s string, v *Value) { // ensure the value within frame
-	if e == nil {
-		panic("ensure: " + s)
-	}
 	if e.symbol == s {
 		e.value = v
 		return
@@ -248,9 +235,6 @@ func (e *Env) withFoldop(symbol string, f func(x, y *Value) *Value) *Env {
 }
 
 func (e *Env) eval(v *Value) *Value {
-	if e == nil {
-		panic("eval: e = nil")
-	}
 	switch v.kind {
 	case KindNone, KindBool, KindInt:
 		return v
