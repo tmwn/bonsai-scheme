@@ -237,6 +237,49 @@ fn default_env() -> Rc<Env> {
                 }))
                 .into())
             }),
+        )
+        .with_func(
+            "let",
+            Box::new(|e, v| {
+                let (e2, mut kvs) = (e.new_frame(), v.first()?);
+                while let Pair(kv, n_kvs) = kvs.as_ref() {
+                    e2.ensure(kv.first()?.symbol()?, eval(&e, kv.second()?.first()?)?);
+                    kvs = n_kvs;
+                }
+                eval_list(&e2, v.second()?)
+            }),
+        )
+        .with_func(
+            "let*",
+            Box::new(|e, v| {
+                let (mut e, mut kvs) = (e.clone(), v.first()?);
+                while let Pair(kv, n_kvs) = kvs.as_ref() {
+                    let v = eval(&e, kv.second()?.first()?)?;
+                    e = e.new_frame();
+                    e.ensure(kv.first()?.symbol()?, v);
+                    kvs = n_kvs;
+                }
+                eval_list(&e, v.second()?)
+            }),
+        )
+        .with_func(
+            "letrec",
+            Box::new(|e, v| {
+                let (e, mut kvs) = (e.new_frame(), v.first()?);
+                while let Pair(kv, n_kvs) = kvs.as_ref() {
+                    e.ensure(kv.first()?.symbol()?, Nil().into());
+                    e.ensure(kv.first()?.symbol()?, eval(&e, kv.second()?.first()?)?);
+                    kvs = n_kvs;
+                }
+                eval_list(&e, v.second()?)
+            }),
+        )
+        .with_func(
+            "if",
+            Box::new(|e, v| match eval(e, v.first()?)?.bool() {
+                true => eval(e, v.second()?.first()?),
+                false => eval(e, v.second()?.second()?.first()?),
+            }),
         );
     res.into()
 }
