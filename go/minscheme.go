@@ -146,74 +146,47 @@ func (v *Value) eq(u *Value) bool {
 }
 
 type Env struct {
-	symbol    string
-	value     *Value
-	next      *Env
-	nextFrame *Env
+	m    map[string]*Value
+	next *Env
 }
 
 func (e *Env) lookup(s string) *Value {
-	if e.symbol == s {
-		return e.value
-	}
-	if e.nextFrame != nil {
-		return e.nextFrame.lookup(s)
+	if v, ok := e.m[s]; ok {
+		return v
 	}
 	return e.next.lookup(s)
 }
 
 func (e *Env) set(s string, v *Value) {
-	if e.symbol == s {
-		e.value = v
-		return
-	}
-	if e.nextFrame != nil {
-		e.nextFrame.set(s, v)
+	if _, ok := e.m[s]; ok {
+		e.m[s] = v
 		return
 	}
 	e.next.set(s, v)
 }
 
-func (e *Env) ensure(s string, v *Value) { // ensure the value within frame
-	if e.symbol == s {
-		e.value = v
-		return
-	}
-	if e.next != nil {
-		e.next.ensure(s, v)
-		return
-	}
-	e.next = &Env{
-		symbol:    s,
-		value:     v,
-		nextFrame: e.nextFrame,
-	}
-	e.nextFrame = nil
+// ensure ensures the value within frame, and returns e for convenience.
+func (e *Env) ensure(s string, v *Value) *Env {
+	e.m[s] = v
+	return e
 }
 
 func (e *Env) newFrame() *Env {
 	return &Env{
-		nextFrame: e,
-	}
-}
-
-func (e *Env) with(symbol string, value *Value) *Env {
-	return &Env{
-		symbol: symbol,
-		value:  value,
-		next:   e,
+		m:    make(map[string]*Value),
+		next: e,
 	}
 }
 
 func (e *Env) withOp1(symbol string, f func(x *Value) *Value) *Env {
-	return e.with(symbol, newFunc(func(e *Env, v *Value) *Value {
+	return e.ensure(symbol, newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
 		return f(x)
 	}))
 }
 
 func (e *Env) withOp2(symbol string, f func(x, y *Value) *Value) *Env {
-	return e.with(symbol, newFunc(func(e *Env, v *Value) *Value {
+	return e.ensure(symbol, newFunc(func(e *Env, v *Value) *Value {
 		x := e.eval(v.first)
 		y := e.eval(v.second.first)
 		return f(x, y)
@@ -229,7 +202,7 @@ func (e *Env) fold(v *Value, f func(x, y *Value) *Value) *Value {
 }
 
 func (e *Env) withFoldop(symbol string, f func(x, y *Value) *Value) *Env {
-	return e.with(symbol, newFunc(func(e *Env, v *Value) *Value {
+	return e.ensure(symbol, newFunc(func(e *Env, v *Value) *Value {
 		return e.fold(v, f)
 	}))
 }
@@ -272,7 +245,7 @@ func zipIter(xs, ys *Value, f func(x, y *Value)) {
 }
 
 func newEnv() *Env {
-	var env *Env
+	env := &Env{m: make(map[string]*Value)}
 	return env.
 		withFoldop("+", func(x, y *Value) *Value { return newInt(x.intVal + y.intVal) }).
 		withFoldop("*", func(x, y *Value) *Value { return newInt(x.intVal * y.intVal) }).
@@ -291,8 +264,8 @@ func newEnv() *Env {
 		withOp2("cons", func(x, y *Value) *Value { return newPair(x, y) }).
 		withOp2("eq?", func(x, y *Value) *Value { return newBool(x.eq(y)) }).
 		withOp1("print", func(x *Value) *Value { fmt.Println(x); return newNone() }).
-		with("begin", newFunc(func(e *Env, v *Value) *Value { return e.evalList(v) })).
-		with("define", newFunc(func(e *Env, v *Value) *Value {
+		ensure("begin", newFunc(func(e *Env, v *Value) *Value { return e.evalList(v) })).
+		ensure("define", newFunc(func(e *Env, v *Value) *Value {
 			funArgs, body := v.first, v.second
 			var name, value *Value
 			if funArgs.kind == KindSymbol {
@@ -311,44 +284,45 @@ func newEnv() *Env {
 			e.ensure(name.symbol, e.eval(value))
 			return newNone()
 		})).
-		with("lambda", newFunc(func(e *Env, v *Value) *Value {
+		ensure("lambda", newFunc(func(e *Env, v *Value) *Value {
 			return newFunc(func(e2 *Env, v2 *Value) *Value {
 				ne := e.newFrame()
 				zipIter(v.first, v2, func(x, y *Value) {
 					val := e2.eval(y)
-					ne = ne.with(x.symbol, val)
+					ne = ne.ensure(x.symbol, val)
 				})
 				return ne.evalList(v.second)
 			})
 		})).
-		with("let", newFunc(func(e *Env, v *Value) *Value {
-			e2 := e
+		ensure("let", newFunc(func(e *Env, v *Value) *Value {
+			e2 := e.newFrame()
 			symValIter(v.first, func(sym string, val *Value) {
-				e = e.with(sym, e2.eval(val))
+				e2.ensure(sym, e.eval(val))
+			})
+			return e2.evalList(v.second)
+		})).
+		ensure("let*", newFunc(func(e *Env, v *Value) *Value {
+			symValIter(v.first, func(sym string, val *Value) {
+				e = e.newFrame().ensure(sym, e.eval(val))
 			})
 			return e.evalList(v.second)
 		})).
-		with("let*", newFunc(func(e *Env, v *Value) *Value {
+		ensure("letrec", newFunc(func(e *Env, v *Value) *Value {
+			e = e.newFrame()
 			symValIter(v.first, func(sym string, val *Value) {
-				e = e.with(sym, e.eval(val))
+				e.ensure(sym, nil)
+				e = e.ensure(sym, e.eval(val))
 			})
 			return e.evalList(v.second)
 		})).
-		with("letrec", newFunc(func(e *Env, v *Value) *Value {
-			symValIter(v.first, func(sym string, val *Value) {
-				e = e.with(sym, nil)
-				e.value = e.eval(val)
-			})
-			return e.evalList(v.second)
-		})).
-		with("if", newFunc(func(e *Env, v *Value) *Value {
+		ensure("if", newFunc(func(e *Env, v *Value) *Value {
 			u := v.second.first
 			if !e.eval(v.first).boolVal {
 				u = v.second.second.first
 			}
 			return e.eval(u)
 		})).
-		with("cond", newFunc(func(e *Env, v *Value) *Value {
+		ensure("cond", newFunc(func(e *Env, v *Value) *Value {
 			for {
 				f := v.first
 				if e.eval(f.first).boolVal {
@@ -357,16 +331,16 @@ func newEnv() *Env {
 				v = v.second
 			}
 		})).
-		with("else", newBool(true)).
-		with("set!", newFunc(func(e *Env, v *Value) *Value {
+		ensure("else", newBool(true)).
+		ensure("set!", newFunc(func(e *Env, v *Value) *Value {
 			e.set(v.first.symbol, e.eval(v.second.first))
 			return newNone()
 		})).
-		with("set-car!", newFunc(func(e *Env, v *Value) *Value {
+		ensure("set-car!", newFunc(func(e *Env, v *Value) *Value {
 			e.eval(v.first).first = e.eval(v.second.first)
 			return newNone()
 		})).
-		with("set-cdr!", newFunc(func(e *Env, v *Value) *Value {
+		ensure("set-cdr!", newFunc(func(e *Env, v *Value) *Value {
 			e.eval(v.first).second = e.eval(v.second.first)
 			return newNone()
 		}))
