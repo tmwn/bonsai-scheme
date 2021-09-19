@@ -4,19 +4,20 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"regexp"
 	"strconv"
 )
 
-var code string
-
 func main() {
-	b, err := ioutil.ReadFile(os.Args[1])
+	code, err := ioutil.ReadFile(os.Args[1])
 	if err != nil {
 		panic(err)
 	}
-	code = string(b)
+	tokenize(string(code))
 
-	newEnv().evalList(list())
+	l := list()
+
+	newEnv().evalList(l)
 }
 
 type Kind int
@@ -103,47 +104,25 @@ func (v *Value) eq(u *Value) bool {
 	return false
 }
 
-func next() byte {
-	c := code[0]
-	code = code[1:]
-	return c
-}
-
-func peek() byte {
-	return code[0]
-}
-
-func skip() {
-	if len(code) == 0 {
-		return
-	}
-	c := peek()
-	if c == ' ' || c == '\n' {
-		next()
-		skip()
+func tokenize(code string) { // update tokens
+	s := regexp.MustCompile(`([()'])`).ReplaceAllString(code, " $1 ")
+	for _, x := range regexp.MustCompile(`\s+`).Split(s, -1) {
+		if x != "" {
+			tokens = append(tokens, x)
+		}
 	}
 }
+
+var tokens []string
 
 func token() string {
-	skip()
-	switch c := next(); c {
-	case '(', ')', '\'':
-		return string(c)
-	case '#':
-		return "#" + string(next())
-	default:
-		s := string(c)
-		for c = peek(); c != ')' && c != ' ' && c != '\n'; c = peek() {
-			s += string(c)
-			next()
-		}
-		return s
-	}
+	res := tokens[0]
+	tokens = tokens[1:]
+	return res
 }
 
 func list() *Value {
-	skip()
-	if len(code) == 0 || peek() == ')' {
+	if len(tokens) == 0 || tokens[0] == ")" {
 		return newNone()
 	}
 	return newPair(value(), list())
@@ -151,9 +130,9 @@ func list() *Value {
 
 func value() *Value {
 	t := token()
-	if t[0] == '(' {
+	if t == "(" {
 		res := list()
-		next()
+		token() // skip )
 		return res
 	} else if t[0] == '#' {
 		return newBool(t[1] == 't')
