@@ -58,13 +58,13 @@ impl Val {
         if let Pair(x, _) = self {
             return Ok(x);
         }
-        Err("not pair".into())
+        Err("first: not pair".into())
     }
     fn second(&self) -> Result<&Rc<Val>> {
         if let Pair(_, y) = self {
             return Ok(y);
         }
-        Err("not pair".into())
+        Err("second: not pair".into())
     }
     fn int(&self) -> Result<&i64> {
         if let Int(x) = self {
@@ -280,6 +280,17 @@ fn default_env() -> Rc<Env> {
                 true => eval(e, v.second()?.first()?),
                 false => eval(e, v.second()?.second()?.first()?),
             }),
-        );
+        )
+        .with_func(
+            "cond",
+            Box::new(|e, mut v| loop {
+                let f = v.first()?;
+                if eval(e, f.first()?)?.bool() {
+                    break eval(e, f.second()?.first()?);
+                }
+                v = v.second()?;
+            }),
+        )
+        .ensure("else", Bool(true).into());
     res.into()
 }
