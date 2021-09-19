@@ -140,12 +140,12 @@ impl Env {
         self.with_func(
             s,
             Box::new(move |e, mut v| {
-                let mut res = eval(e, v.first()?)?;
+                let mut acc = eval(e, v.first()?)?;
                 while let Value::Pair(x, _) = v.second()? {
-                    res = f(&*res, &*eval(e, &*x)?)?;
+                    acc = f(&*acc, &*eval(e, &*x)?)?;
                     v = v.second()?;
                 }
-                Ok(res)
+                Ok(acc)
             }),
         )
     }
@@ -165,6 +165,11 @@ fn default_env() -> Env {
     .with_op2("-", |x, y| Ok(Int(x.int()? - y.int()?).into()))
     .with_op2("/", |x, y| Ok(Int(x.int()? / y.int()?).into()))
     .with_op2("=", |x, y| Ok(Bool(x.int()? == y.int()?).into()))
+    .with_op2("<", |x, y| Ok(Bool(x.int()? < y.int()?).into()))
+    .with_op2("<=", |x, y| Ok(Bool(x.int()? <= y.int()?).into()))
+    .with_op2(">", |x, y| Ok(Bool(x.int()? > y.int()?).into()))
+    .with_op2(">=", |x, y| Ok(Bool(x.int()? >= y.int()?).into()))
+    .with_op1("not", |x| Ok(Bool(!x.bool()).into()))
     .with_op1("print", |v| {
         println!("{}", v);
         Ok(Nil().into())
