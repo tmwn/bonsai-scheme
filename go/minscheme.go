@@ -15,7 +15,7 @@ func main() {
 	}
 	tokenize(string(code))
 
-	defaultEnv().evalList(list())
+	defaultEnv().evalList(parseList())
 }
 
 func tokenize(code string) { // update tokens
@@ -35,23 +35,23 @@ func token() string {
 	return res
 }
 
-func list() *Value {
+func parseList() *value {
 	if len(tokens) == 0 || tokens[0] == ")" {
 		return newNone()
 	}
-	return newPair(value(), list())
+	return newPair(parseValue(), parseList())
 }
 
-func value() *Value {
+func parseValue() *value {
 	t := token()
 	if t == "(" {
-		res := list()
+		res := parseList()
 		token() // skip ")"
 		return res
 	} else if t[0] == '#' {
 		return newBool(t[1] == 't')
 	} else if t == "'" {
-		return newQuote(value())
+		return newQuote(parseValue())
 	} else if '0' <= t[0] && t[0] <= '9' || t[0] == '-' && len(t) > 1 {
 		i, err := strconv.Atoi(t)
 		if err != nil {
@@ -63,101 +63,100 @@ func value() *Value {
 	}
 }
 
-type Kind int
+type kind int
 
 const (
-	KindNone Kind = iota
-	KindBool
-	KindInt
-	KindPair
-	KindSymbol
-	KindFunc
-	KindQuote
+	kindNone kind = iota
+	kindBool
+	kindInt
+	kindPair
+	kindSymbol
+	kindFunc
+	kindQuote
 )
 
-type Value struct {
-	kind    Kind
-	first   *Value // Pair
-	second  *Value
+type value struct {
+	kind    kind
+	first   *value
+	second  *value
 	symbol  string
 	boolVal bool
 	intVal  int
-	fun     func(*Env, *Value) *Value
-	quoted  *Value
+	fun     func(*env, *value) *value
+	quoted  *value
 }
 
-func newNone() *Value                            { return &Value{kind: KindNone} }
-func newBool(x bool) *Value                      { return &Value{kind: KindBool, boolVal: x} }
-func newInt(x int) *Value                        { return &Value{kind: KindInt, intVal: x} }
-func newPair(x, y *Value) *Value                 { return &Value{kind: KindPair, first: x, second: y} }
-func newSymbol(x string) *Value                  { return &Value{kind: KindSymbol, symbol: x} }
-func newFunc(f func(*Env, *Value) *Value) *Value { return &Value{kind: KindFunc, fun: f} }
-func newQuote(x *Value) *Value                   { return &Value{kind: KindQuote, quoted: x} }
+func newNone() *value                            { return &value{kind: kindNone} }
+func newBool(x bool) *value                      { return &value{kind: kindBool, boolVal: x} }
+func newInt(x int) *value                        { return &value{kind: kindInt, intVal: x} }
+func newPair(x, y *value) *value                 { return &value{kind: kindPair, first: x, second: y} }
+func newSymbol(x string) *value                  { return &value{kind: kindSymbol, symbol: x} }
+func newFunc(f func(*env, *value) *value) *value { return &value{kind: kindFunc, fun: f} }
+func newQuote(x *value) *value                   { return &value{kind: kindQuote, quoted: x} }
 
-func (v *Value) String() string {
+func (v *value) String() string {
 	switch v.kind {
-	case KindNone:
+	case kindNone:
 		return "()"
-	case KindBool:
+	case kindBool:
 		if v.boolVal {
 			return "#t"
-		} else {
-			return "#f"
 		}
-	case KindInt:
+		return "#f"
+	case kindInt:
 		return strconv.Itoa(v.intVal)
-	case KindPair:
+	case kindPair:
 		return fmt.Sprintf("( %s . %s )", v.first, v.second)
-	case KindSymbol:
+	case kindSymbol:
 		return v.symbol
-	case KindQuote:
+	case kindQuote:
 		return "'" + v.quoted.String()
-	case KindFunc:
+	case kindFunc:
 		return "<func>"
 	}
 	panic("BUG")
 }
 
-func (v *Value) asBool() bool {
+func (v *value) asBool() bool {
 	switch v.kind {
-	case KindBool:
+	case kindBool:
 		return v.boolVal
 	}
 	return true
 }
 
-func (v *Value) eq(u *Value) bool {
+func (v *value) eq(u *value) bool {
 	if v.kind != u.kind {
 		return false
 	}
 	switch v.kind {
-	case KindNone:
+	case kindNone:
 		return true
-	case KindBool:
+	case kindBool:
 		return v.boolVal == u.boolVal
-	case KindInt:
+	case kindInt:
 		return v.intVal == u.intVal
-	case KindQuote:
+	case kindQuote:
 		return v.quoted.eq(u.quoted)
-	case KindSymbol:
+	case kindSymbol:
 		return v.symbol == u.symbol
 	}
 	return false
 }
 
-type Env struct {
-	m    map[string]*Value
-	next *Env
+type env struct {
+	m    map[string]*value
+	next *env
 }
 
-func (e *Env) lookup(s string) *Value {
+func (e *env) lookup(s string) *value {
 	if v, ok := e.m[s]; ok {
 		return v
 	}
 	return e.next.lookup(s)
 }
 
-func (e *Env) set(s string, v *Value) {
+func (e *env) set(s string, v *value) {
 	if _, ok := e.m[s]; ok {
 		e.m[s] = v
 		return
@@ -166,155 +165,155 @@ func (e *Env) set(s string, v *Value) {
 }
 
 // ensure ensures the value within frame, and returns e for convenience.
-func (e *Env) ensure(s string, v *Value) *Env {
+func (e *env) ensure(s string, v *value) *env {
 	e.m[s] = v
 	return e
 }
 
-func (e *Env) newFrame() *Env {
-	return &Env{
-		m:    make(map[string]*Value),
+func (e *env) newFrame() *env {
+	return &env{
+		m:    make(map[string]*value),
 		next: e,
 	}
 }
 
-func (e *Env) withOp1(symbol string, f func(x *Value) *Value) *Env {
-	return e.ensure(symbol, newFunc(func(e *Env, v *Value) *Value {
+func (e *env) withOp1(symbol string, f func(x *value) *value) *env {
+	return e.ensure(symbol, newFunc(func(e *env, v *value) *value {
 		x := e.eval(v.first)
 		return f(x)
 	}))
 }
 
-func (e *Env) withOp2(symbol string, f func(x, y *Value) *Value) *Env {
-	return e.ensure(symbol, newFunc(func(e *Env, v *Value) *Value {
+func (e *env) withOp2(symbol string, f func(x, y *value) *value) *env {
+	return e.ensure(symbol, newFunc(func(e *env, v *value) *value {
 		x := e.eval(v.first)
 		y := e.eval(v.second.first)
 		return f(x, y)
 	}))
 }
 
-func (e *Env) fold(v *Value, f func(x, y *Value) *Value) *Value {
+func (e *env) fold(v *value, f func(x, y *value) *value) *value {
 	res := e.eval(v.first)
-	if v.second.kind == KindNone {
+	if v.second.kind == kindNone {
 		return res
 	}
 	return f(res, e.fold(v.second, f))
 }
 
-func (e *Env) withFoldop(symbol string, f func(x, y *Value) *Value) *Env {
-	return e.ensure(symbol, newFunc(func(e *Env, v *Value) *Value {
+func (e *env) withFoldop(symbol string, f func(x, y *value) *value) *env {
+	return e.ensure(symbol, newFunc(func(e *env, v *value) *value {
 		return e.fold(v, f)
 	}))
 }
 
-func (e *Env) eval(v *Value) *Value {
+func (e *env) eval(v *value) *value {
 	switch v.kind {
-	case KindNone, KindBool, KindInt:
+	case kindNone, kindBool, kindInt:
 		return v
-	case KindQuote:
+	case kindQuote:
 		return v.quoted
-	case KindPair:
+	case kindPair:
 		return e.eval(v.first).fun(e, v.second)
-	case KindSymbol:
+	case kindSymbol:
 		return e.lookup(v.symbol)
 	}
 	panic("eval: " + v.symbol)
 }
 
-func (e *Env) evalList(v *Value) *Value {
+func (e *env) evalList(v *value) *value {
 	res := e.eval(v.first)
-	if v.second.kind == KindNone {
+	if v.second.kind == kindNone {
 		return res
 	}
 	return e.evalList(v.second)
 }
 
-func symValIter(kvs *Value, f func(sym string, val *Value)) {
-	for kvs.kind != KindNone {
+func symValIter(kvs *value, f func(sym string, val *value)) {
+	for kvs.kind != kindNone {
 		kv := kvs.first
 		f(kv.first.symbol, kv.second.first)
 		kvs = kvs.second
 	}
 }
 
-func zipIter(xs, ys *Value, f func(x, y *Value)) {
-	if xs.kind != KindNone {
+func zipIter(xs, ys *value, f func(x, y *value)) {
+	if xs.kind != kindNone {
 		f(xs.first, ys.first)
 		zipIter(xs.second, ys.second, f)
 	}
 }
 
-func defaultEnv() *Env {
-	return ((*Env)(nil)).newFrame().
-		withFoldop("+", func(x, y *Value) *Value { return newInt(x.intVal + y.intVal) }).
-		withFoldop("*", func(x, y *Value) *Value { return newInt(x.intVal * y.intVal) }).
-		withOp2("-", func(x, y *Value) *Value { return newInt(x.intVal - y.intVal) }).
-		withOp2("/", func(x, y *Value) *Value { return newInt(x.intVal / y.intVal) }).
-		withOp2("=", func(x, y *Value) *Value { return newBool(x.intVal == y.intVal) }).
-		withOp2("<", func(x, y *Value) *Value { return newBool(x.intVal < y.intVal) }).
-		withOp2("<=", func(x, y *Value) *Value { return newBool(x.intVal <= y.intVal) }).
-		withOp2(">", func(x, y *Value) *Value { return newBool(x.intVal > y.intVal) }).
-		withOp2(">=", func(x, y *Value) *Value { return newBool(x.intVal >= y.intVal) }).
-		withFoldop("and", func(x, y *Value) *Value { return newBool(x.asBool() && y.asBool()) }).
-		withFoldop("or", func(x, y *Value) *Value { return newBool(x.asBool() || y.asBool()) }).
-		withOp1("not", func(v *Value) *Value { return newBool(!v.boolVal) }).
-		withOp1("car", func(v *Value) *Value { return v.first }).
-		withOp1("cdr", func(v *Value) *Value { return v.second }).
-		withOp2("cons", func(x, y *Value) *Value { return newPair(x, y) }).
-		withOp2("eq?", func(x, y *Value) *Value { return newBool(x.eq(y)) }).
-		withOp1("print", func(x *Value) *Value { fmt.Println(x); return newNone() }).
-		ensure("begin", newFunc(func(e *Env, v *Value) *Value { return e.evalList(v) })).
-		ensure("define", newFunc(func(e *Env, v *Value) *Value {
+func defaultEnv() *env {
+	return ((*env)(nil)).newFrame().
+		withFoldop("+", func(x, y *value) *value { return newInt(x.intVal + y.intVal) }).
+		withFoldop("*", func(x, y *value) *value { return newInt(x.intVal * y.intVal) }).
+		withOp2("-", func(x, y *value) *value { return newInt(x.intVal - y.intVal) }).
+		withOp2("/", func(x, y *value) *value { return newInt(x.intVal / y.intVal) }).
+		withOp2("=", func(x, y *value) *value { return newBool(x.intVal == y.intVal) }).
+		withOp2("<", func(x, y *value) *value { return newBool(x.intVal < y.intVal) }).
+		withOp2("<=", func(x, y *value) *value { return newBool(x.intVal <= y.intVal) }).
+		withOp2(">", func(x, y *value) *value { return newBool(x.intVal > y.intVal) }).
+		withOp2(">=", func(x, y *value) *value { return newBool(x.intVal >= y.intVal) }).
+		withFoldop("and", func(x, y *value) *value { return newBool(x.asBool() && y.asBool()) }).
+		withFoldop("or", func(x, y *value) *value { return newBool(x.asBool() || y.asBool()) }).
+		withOp1("not", func(v *value) *value { return newBool(!v.boolVal) }).
+		withOp1("car", func(v *value) *value { return v.first }).
+		withOp1("cdr", func(v *value) *value { return v.second }).
+		withOp2("cons", func(x, y *value) *value { return newPair(x, y) }).
+		withOp2("eq?", func(x, y *value) *value { return newBool(x.eq(y)) }).
+		withOp1("print", func(x *value) *value { fmt.Println(x); return newNone() }).
+		ensure("begin", newFunc(func(e *env, v *value) *value { return e.evalList(v) })).
+		ensure("define", newFunc(func(e *env, v *value) *value {
 			funArgs, body := v.first, v.second
-			var name, value *Value
-			if funArgs.kind == KindSymbol {
+			var name, val *value
+			if funArgs.kind == kindSymbol {
 				name = funArgs
-				value = body.first
+				val = body.first
 			} else {
 				name = funArgs.first
-				value = newPair(newSymbol("lambda"), newPair(funArgs.second, body))
+				val = newPair(newSymbol("lambda"), newPair(funArgs.second, body))
 			}
-			e.ensure(name.symbol, e.eval(value))
+			e.ensure(name.symbol, e.eval(val))
 			return newNone()
 		})).
-		ensure("lambda", newFunc(func(e *Env, v *Value) *Value {
-			return newFunc(func(e2 *Env, v2 *Value) *Value {
+		ensure("lambda", newFunc(func(e *env, v *value) *value {
+			return newFunc(func(e2 *env, v2 *value) *value {
 				e := e.newFrame()
-				zipIter(v.first, v2, func(x, y *Value) {
+				zipIter(v.first, v2, func(x, y *value) {
 					e.ensure(x.symbol, e2.eval(y))
 				})
 				return e.evalList(v.second)
 			})
 		})).
-		ensure("let", newFunc(func(e *Env, v *Value) *Value {
+		ensure("let", newFunc(func(e *env, v *value) *value {
 			e2 := e.newFrame()
-			symValIter(v.first, func(sym string, val *Value) {
+			symValIter(v.first, func(sym string, val *value) {
 				e2.ensure(sym, e.eval(val))
 			})
 			return e2.evalList(v.second)
 		})).
-		ensure("let*", newFunc(func(e *Env, v *Value) *Value {
-			symValIter(v.first, func(sym string, val *Value) {
+		ensure("let*", newFunc(func(e *env, v *value) *value {
+			symValIter(v.first, func(sym string, val *value) {
 				e = e.newFrame().ensure(sym, e.eval(val))
 			})
 			return e.evalList(v.second)
 		})).
-		ensure("letrec", newFunc(func(e *Env, v *Value) *Value {
+		ensure("letrec", newFunc(func(e *env, v *value) *value {
 			e = e.newFrame()
-			symValIter(v.first, func(sym string, val *Value) {
+			symValIter(v.first, func(sym string, val *value) {
 				e.ensure(sym, nil)
 				e.ensure(sym, e.eval(val))
 			})
 			return e.evalList(v.second)
 		})).
-		ensure("if", newFunc(func(e *Env, v *Value) *Value {
+		ensure("if", newFunc(func(e *env, v *value) *value {
 			u := v.second.first
 			if !e.eval(v.first).boolVal {
 				u = v.second.second.first
 			}
 			return e.eval(u)
 		})).
-		ensure("cond", newFunc(func(e *Env, v *Value) *Value {
+		ensure("cond", newFunc(func(e *env, v *value) *value {
 			for {
 				f := v.first
 				if e.eval(f.first).boolVal {
@@ -324,15 +323,15 @@ func defaultEnv() *Env {
 			}
 		})).
 		ensure("else", newBool(true)).
-		ensure("set!", newFunc(func(e *Env, v *Value) *Value {
+		ensure("set!", newFunc(func(e *env, v *value) *value {
 			e.set(v.first.symbol, e.eval(v.second.first))
 			return newNone()
 		})).
-		ensure("set-car!", newFunc(func(e *Env, v *Value) *Value {
+		ensure("set-car!", newFunc(func(e *env, v *value) *value {
 			e.eval(v.first).first = e.eval(v.second.first)
 			return newNone()
 		})).
-		ensure("set-cdr!", newFunc(func(e *Env, v *Value) *Value {
+		ensure("set-cdr!", newFunc(func(e *env, v *value) *value {
 			e.eval(v.first).second = e.eval(v.second.first)
 			return newNone()
 		}))
