@@ -54,13 +54,13 @@ enum Value {
 }
 use Value::*;
 impl Value {
-    fn first(&self) -> Result<&Value> {
+    fn first(&self) -> Result<&Rc<Value>> {
         if let Pair(x, _) = self {
             return Ok(x);
         }
         Err("not pair".into())
     }
-    fn second(&self) -> Result<&Value> {
+    fn second(&self) -> Result<&Rc<Value>> {
         if let Pair(_, y) = self {
             return Ok(y);
         }
@@ -74,6 +74,16 @@ impl Value {
     }
     fn bool(&self) -> bool {
         !matches!(self, Bool(false))
+    }
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Nil(), Nil()) => true,
+            (Bool(x), Bool(y)) => x == y,
+            (Int(x), Int(y)) => x == y,
+            (Quote(x), Quote(y)) => x.eq(y),
+            (Symbol(x), Symbol(y)) => x == y,
+            _ => false,
+        }
     }
 }
 impl std::fmt::Display for Value {
@@ -106,7 +116,7 @@ fn eval(e: &Env, v: &Value) -> Result<Rc<Value>> {
 }
 fn eval_list(e: &Env, v: &Value) -> Result<Rc<Value>> {
     let res = eval(e, v.first()?)?;
-    if let Nil() = v.second()? {
+    if let Nil() = v.second()?.as_ref() {
         return Ok(res);
     }
     eval_list(e, v.second()?)
@@ -127,22 +137,22 @@ impl Env {
         self.m.borrow_mut().insert(s.to_string(), v);
         self
     }
-    fn with_op1(self, s: &str, f: fn(&Value) -> Result<Rc<Value>>) -> Self {
-        self.with_func(s, Box::new(move |e, v| f(&*eval(e, v.first()?)?)))
+    fn with_op1(self, s: &str, f: fn(&Rc<Value>) -> Result<Rc<Value>>) -> Self {
+        self.with_func(s, Box::new(move |e, v| f(&eval(e, v.first()?)?)))
     }
-    fn with_op2(self, s: &str, f: fn(&Value, &Value) -> Result<Rc<Value>>) -> Self {
+    fn with_op2(self, s: &str, f: fn(&Rc<Value>, &Rc<Value>) -> Result<Rc<Value>>) -> Self {
         self.with_func(
             s,
-            Box::new(move |e, v| f(&*eval(e, v.first()?)?, &*eval(e, v.second()?.first()?)?)),
+            Box::new(move |e, v| f(&eval(e, v.first()?)?, &eval(e, v.second()?.first()?)?)),
         )
     }
-    fn with_fold(self, s: &str, f: fn(&Value, &Value) -> Result<Rc<Value>>) -> Self {
+    fn with_fold(self, s: &str, f: fn(&Rc<Value>, &Rc<Value>) -> Result<Rc<Value>>) -> Self {
         self.with_func(
             s,
             Box::new(move |e, mut v| {
                 let mut acc = eval(e, v.first()?)?;
-                while let Value::Pair(x, _) = v.second()? {
-                    acc = f(&*acc, &*eval(e, &*x)?)?;
+                while let Value::Pair(x, _) = v.second()?.as_ref() {
+                    acc = f(&acc, &eval(e, &*x)?)?;
                     v = v.second()?;
                 }
                 Ok(acc)
@@ -169,6 +179,10 @@ fn default_env() -> Env {
     .with_op2("<=", |x, y| Ok(Bool(x.int()? <= y.int()?).into()))
     .with_op2(">", |x, y| Ok(Bool(x.int()? > y.int()?).into()))
     .with_op2(">=", |x, y| Ok(Bool(x.int()? >= y.int()?).into()))
+    .with_op2("eq?", |x, y| Ok(Bool(x.eq(y)).into()))
+    .with_op2("cons", |x, y| Ok(Pair(x.clone(), y.clone()).into()))
+    .with_op1("car", |x| Ok(x.first()?.clone()))
+    .with_op1("cdr", |x| Ok(x.second()?.clone()))
     .with_op1("not", |x| Ok(Bool(!x.bool()).into()))
     .with_op1("print", |v| {
         println!("{}", v);
