@@ -77,14 +77,12 @@ struct Env {
     next: Option<Box<Env>>,
 }
 impl Env {
-    fn lookup(&self, s: &str) -> Rc<Value> {
-        if let Some(v) = self.m.borrow().get(s) {
-            return Rc::clone(v);
+    fn lookup(&self, s: &str) -> Result<Rc<Value>> {
+        match (self.m.borrow().get(s), self.next.as_ref()) {
+            (Some(v), _) => Ok(Rc::clone(v)),
+            (_, Some(e)) => e.lookup(s),
+            _ => Err(format!("not found: {}", s).into()),
         }
-        self.next
-            .as_ref()
-            .expect(&format!("not found: {}", s))
-            .lookup(s)
     }
     fn ensure(self, s: &str, v: Rc<Value>) -> Self {
         self.m.borrow_mut().insert(s.to_string(), v);
@@ -109,13 +107,13 @@ fn default_env() -> Env {
 }
 fn eval(e: &Env, v: &Value) -> Result<Rc<Value>> {
     Ok(match v {
-        Value::None() => Rc::new(Value::None()),
-        Value::Bool(x) => Rc::new(Value::Bool(*x)),
+        Value::None() => Value::None().into(),
+        Value::Bool(x) => Value::Bool(*x).into(),
         Value::Pair(x, y) => match eval(e, x)?.as_ref() {
             Value::Func(f) => f(e, y)?,
             _ => return Err("not func".into()),
         },
-        Value::Symbol(x) => e.lookup(x),
+        Value::Symbol(x) => e.lookup(x)?,
         _ => return Err("BUG".into()),
     })
 }
