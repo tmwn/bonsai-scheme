@@ -47,20 +47,22 @@ enum Val {
     Nil(),
     Bool(bool),
     Int(i64),
-    Pair(Rc<Val>, Rc<Val>),
+    Pair(RefVal, RefVal),
     Symbol(String),
-    Quote(Rc<Val>),
-    Func(Box<dyn Fn(&Rc<Env>, &Rc<Val>) -> Result<Rc<Val>>>),
+    Quote(RefVal),
+    Func(Box<dyn Fn(&Rc<Env>, &RefVal) -> Result<RefVal>>),
 }
+type RefVal = Rc<Val>;
+
 use Val::*;
 impl Val {
-    fn first(&self) -> Result<&Rc<Val>> {
+    fn first(&self) -> Result<&RefVal> {
         if let Pair(x, _) = self {
             return Ok(x);
         }
         Err("first: not pair".into())
     }
-    fn second(&self) -> Result<&Rc<Val>> {
+    fn second(&self) -> Result<&RefVal> {
         if let Pair(_, y) = self {
             return Ok(y);
         }
@@ -106,7 +108,7 @@ impl std::fmt::Display for Val {
         }
     }
 }
-fn eval(e: &Rc<Env>, v: &Val) -> Result<Rc<Val>> {
+fn eval(e: &Rc<Env>, v: &Val) -> Result<RefVal> {
     Ok(match v {
         Nil() => Nil().into(),
         Bool(x) => Bool(*x).into(),
@@ -120,7 +122,7 @@ fn eval(e: &Rc<Env>, v: &Val) -> Result<Rc<Val>> {
         _ => return Err(format!("{}", v).into()),
     })
 }
-fn eval_list(e: &Rc<Env>, v: &Val) -> Result<Rc<Val>> {
+fn eval_list(e: &Rc<Env>, v: &Val) -> Result<RefVal> {
     let res = eval(e, v.first()?)?;
     if let Nil() = v.second()?.as_ref() {
         return Ok(res);
@@ -128,31 +130,31 @@ fn eval_list(e: &Rc<Env>, v: &Val) -> Result<Rc<Val>> {
     eval_list(e, v.second()?)
 }
 struct Env {
-    m: RefCell<HashMap<String, Rc<Val>>>,
+    m: RefCell<HashMap<String, RefVal>>,
     next: Option<Rc<Env>>,
 }
 impl Env {
-    fn lookup(&self, s: &str) -> Result<Rc<Val>> {
+    fn lookup(&self, s: &str) -> Result<RefVal> {
         match (self.m.borrow().get(s), self.next.as_ref()) {
             (Some(v), _) => Ok(Rc::clone(v)),
             (_, Some(e)) => e.lookup(s),
             _ => Err(format!("not found: {}", s).into()),
         }
     }
-    fn ensure(&self, s: &str, v: Rc<Val>) -> &Self {
+    fn ensure(&self, s: &str, v: RefVal) -> &Self {
         self.m.borrow_mut().insert(s.to_string(), v);
         self
     }
-    fn with_op1(&self, s: &str, f: fn(&Rc<Val>) -> Result<Rc<Val>>) -> &Self {
+    fn with_op1(&self, s: &str, f: fn(&RefVal) -> Result<RefVal>) -> &Self {
         self.with_func(s, Box::new(move |e, v| f(&eval(e, v.first()?)?)))
     }
-    fn with_op2(&self, s: &str, f: fn(&Rc<Val>, &Rc<Val>) -> Result<Rc<Val>>) -> &Self {
+    fn with_op2(&self, s: &str, f: fn(&RefVal, &RefVal) -> Result<RefVal>) -> &Self {
         self.with_func(
             s,
             Box::new(move |e, v| f(&eval(e, v.first()?)?, &eval(e, v.second()?.first()?)?)),
         )
     }
-    fn with_fold(&self, s: &str, f: fn(&Rc<Val>, &Rc<Val>) -> Result<Rc<Val>>) -> &Self {
+    fn with_fold(&self, s: &str, f: fn(&RefVal, &RefVal) -> Result<RefVal>) -> &Self {
         self.with_func(
             s,
             Box::new(move |e, mut v| {
@@ -165,7 +167,7 @@ impl Env {
             }),
         )
     }
-    fn with_func(&self, s: &str, f: Box<dyn Fn(&Rc<Env>, &Rc<Val>) -> Result<Rc<Val>>>) -> &Self {
+    fn with_func(&self, s: &str, f: Box<dyn Fn(&Rc<Env>, &RefVal) -> Result<RefVal>>) -> &Self {
         self.ensure(s, Func(f).into())
     }
     fn new_frame(self: &Rc<Self>) -> Rc<Self> {
@@ -175,7 +177,7 @@ impl Env {
         }
         .into()
     }
-    fn set(&self, s: &str, v: Rc<Val>) -> Result<()> {
+    fn set(&self, s: &str, v: RefVal) -> Result<()> {
         if self.m.borrow().contains_key(s) {
             self.m.borrow_mut().insert(s.to_string(), v);
             return Ok(());
