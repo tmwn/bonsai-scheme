@@ -175,6 +175,13 @@ impl Env {
         }
         .into()
     }
+    fn set(&self, s: &str, v: Rc<Val>) -> Result<()> {
+        if self.m.borrow().contains_key(s) {
+            self.m.borrow_mut().insert(s.to_string(), v);
+            return Ok(());
+        }
+        self.next.as_ref().ok_or("set: not found")?.set(s, v)
+    }
 }
 fn default_env() -> Rc<Env> {
     let res = Env {
@@ -289,6 +296,13 @@ fn default_env() -> Rc<Env> {
                     break eval(e, f.second()?.first()?);
                 }
                 v = v.second()?;
+            }),
+        )
+        .with_func(
+            "set!",
+            Box::new(|e, v| {
+                e.set(v.first()?.symbol()?, eval(e, v.second()?.first()?)?)?;
+                Ok(Nil().into())
             }),
         )
         .ensure("else", Bool(true).into());
