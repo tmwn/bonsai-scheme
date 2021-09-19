@@ -23,14 +23,14 @@ impl Parser {
                 .collect(),
         }
     }
-    fn list(&mut self) -> Value {
+    fn list(&mut self) -> Val {
         if self.tokens.is_empty() || self.tokens.last().unwrap() == ")" {
             self.tokens.pop();
             return Nil();
         }
         Pair(self.value().into(), self.list().into())
     }
-    fn value(&mut self) -> Value {
+    fn value(&mut self) -> Val {
         match self.tokens.pop().expect("EOF").as_str() {
             "(" => self.list(),
             "#t" => Bool(true),
@@ -43,24 +43,24 @@ impl Parser {
         }
     }
 }
-enum Value {
+enum Val {
     Nil(),
     Bool(bool),
     Int(i64),
-    Pair(Rc<Value>, Rc<Value>),
+    Pair(Rc<Val>, Rc<Val>),
     Symbol(String),
-    Quote(Rc<Value>),
-    Func(Box<dyn Fn(&Env, &Value) -> Result<Rc<Value>>>),
+    Quote(Rc<Val>),
+    Func(Box<dyn Fn(&Rc<Env>, &Rc<Val>) -> Result<Rc<Val>>>),
 }
-use Value::*;
-impl Value {
-    fn first(&self) -> Result<&Rc<Value>> {
+use Val::*;
+impl Val {
+    fn first(&self) -> Result<&Rc<Val>> {
         if let Pair(x, _) = self {
             return Ok(x);
         }
         Err("not pair".into())
     }
-    fn second(&self) -> Result<&Rc<Value>> {
+    fn second(&self) -> Result<&Rc<Val>> {
         if let Pair(_, y) = self {
             return Ok(y);
         }
@@ -75,6 +75,12 @@ impl Value {
     fn bool(&self) -> bool {
         !matches!(self, Bool(false))
     }
+    fn symbol(&self) -> Result<&str> {
+        if let Symbol(x) = self {
+            return Ok(x);
+        }
+        Err("not symbol".into())
+    }
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Nil(), Nil()) => true,
@@ -86,7 +92,7 @@ impl Value {
         }
     }
 }
-impl std::fmt::Display for Value {
+impl std::fmt::Display for Val {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Nil() => write!(f, "()"),
@@ -100,7 +106,7 @@ impl std::fmt::Display for Value {
         }
     }
 }
-fn eval(e: &Env, v: &Value) -> Result<Rc<Value>> {
+fn eval(e: &Rc<Env>, v: &Val) -> Result<Rc<Val>> {
     Ok(match v {
         Nil() => Nil().into(),
         Bool(x) => Bool(*x).into(),
@@ -114,7 +120,7 @@ fn eval(e: &Env, v: &Value) -> Result<Rc<Value>> {
         _ => return Err(format!("{}", v).into()),
     })
 }
-fn eval_list(e: &Env, v: &Value) -> Result<Rc<Value>> {
+fn eval_list(e: &Rc<Env>, v: &Val) -> Result<Rc<Val>> {
     let res = eval(e, v.first()?)?;
     if let Nil() = v.second()?.as_ref() {
         return Ok(res);
@@ -122,36 +128,36 @@ fn eval_list(e: &Env, v: &Value) -> Result<Rc<Value>> {
     eval_list(e, v.second()?)
 }
 struct Env {
-    m: RefCell<HashMap<String, Rc<Value>>>,
-    next: Option<Box<Env>>,
+    m: RefCell<HashMap<String, Rc<Val>>>,
+    next: Option<Rc<Env>>,
 }
 impl Env {
-    fn lookup(&self, s: &str) -> Result<Rc<Value>> {
+    fn lookup(&self, s: &str) -> Result<Rc<Val>> {
         match (self.m.borrow().get(s), self.next.as_ref()) {
             (Some(v), _) => Ok(Rc::clone(v)),
             (_, Some(e)) => e.lookup(s),
             _ => Err(format!("not found: {}", s).into()),
         }
     }
-    fn ensure(self, s: &str, v: Rc<Value>) -> Self {
+    fn ensure(&self, s: &str, v: Rc<Val>) -> &Self {
         self.m.borrow_mut().insert(s.to_string(), v);
         self
     }
-    fn with_op1(self, s: &str, f: fn(&Rc<Value>) -> Result<Rc<Value>>) -> Self {
+    fn with_op1(&self, s: &str, f: fn(&Rc<Val>) -> Result<Rc<Val>>) -> &Self {
         self.with_func(s, Box::new(move |e, v| f(&eval(e, v.first()?)?)))
     }
-    fn with_op2(self, s: &str, f: fn(&Rc<Value>, &Rc<Value>) -> Result<Rc<Value>>) -> Self {
+    fn with_op2(&self, s: &str, f: fn(&Rc<Val>, &Rc<Val>) -> Result<Rc<Val>>) -> &Self {
         self.with_func(
             s,
             Box::new(move |e, v| f(&eval(e, v.first()?)?, &eval(e, v.second()?.first()?)?)),
         )
     }
-    fn with_fold(self, s: &str, f: fn(&Rc<Value>, &Rc<Value>) -> Result<Rc<Value>>) -> Self {
+    fn with_fold(&self, s: &str, f: fn(&Rc<Val>, &Rc<Val>) -> Result<Rc<Val>>) -> &Self {
         self.with_func(
             s,
             Box::new(move |e, mut v| {
                 let mut acc = eval(e, v.first()?)?;
-                while let Value::Pair(x, _) = v.second()?.as_ref() {
+                while let Val::Pair(x, _) = v.second()?.as_ref() {
                     acc = f(&acc, &eval(e, &*x)?)?;
                     v = v.second()?;
                 }
@@ -159,34 +165,78 @@ impl Env {
             }),
         )
     }
-    fn with_func(self, s: &str, f: Box<dyn Fn(&Env, &Value) -> Result<Rc<Value>>>) -> Self {
+    fn with_func(&self, s: &str, f: Box<dyn Fn(&Rc<Env>, &Rc<Val>) -> Result<Rc<Val>>>) -> &Self {
         self.ensure(s, Func(f).into())
     }
+    fn new_frame(self: &Rc<Self>) -> Rc<Self> {
+        Env {
+            m: HashMap::new().into(),
+            next: Some(self.clone()),
+        }
+        .into()
+    }
 }
-fn default_env() -> Env {
-    Env {
+fn default_env() -> Rc<Env> {
+    let res = Env {
         m: RefCell::new(HashMap::new()),
         next: None,
-    }
-    .with_fold("+", |x, y| Ok(Int(x.int()? + y.int()?).into()))
-    .with_fold("*", |x, y| Ok(Int(x.int()? * y.int()?).into()))
-    .with_fold("and", |x, y| Ok(Bool(x.bool() && y.bool()).into()))
-    .with_fold("or", |x, y| Ok(Bool(x.bool() || y.bool()).into()))
-    .with_op2("-", |x, y| Ok(Int(x.int()? - y.int()?).into()))
-    .with_op2("/", |x, y| Ok(Int(x.int()? / y.int()?).into()))
-    .with_op2("=", |x, y| Ok(Bool(x.int()? == y.int()?).into()))
-    .with_op2("<", |x, y| Ok(Bool(x.int()? < y.int()?).into()))
-    .with_op2("<=", |x, y| Ok(Bool(x.int()? <= y.int()?).into()))
-    .with_op2(">", |x, y| Ok(Bool(x.int()? > y.int()?).into()))
-    .with_op2(">=", |x, y| Ok(Bool(x.int()? >= y.int()?).into()))
-    .with_op2("eq?", |x, y| Ok(Bool(x.eq(y)).into()))
-    .with_op2("cons", |x, y| Ok(Pair(x.clone(), y.clone()).into()))
-    .with_op1("car", |x| Ok(x.first()?.clone()))
-    .with_op1("cdr", |x| Ok(x.second()?.clone()))
-    .with_op1("not", |x| Ok(Bool(!x.bool()).into()))
-    .with_op1("print", |v| {
-        println!("{}", v);
-        Ok(Nil().into())
-    })
-    .with_func("begin", Box::new(|e, v| eval_list(e, v)))
+    };
+    res.with_fold("+", |x, y| Ok(Int(x.int()? + y.int()?).into()))
+        .with_fold("*", |x, y| Ok(Int(x.int()? * y.int()?).into()))
+        .with_fold("and", |x, y| Ok(Bool(x.bool() && y.bool()).into()))
+        .with_fold("or", |x, y| Ok(Bool(x.bool() || y.bool()).into()))
+        .with_op2("-", |x, y| Ok(Int(x.int()? - y.int()?).into()))
+        .with_op2("/", |x, y| Ok(Int(x.int()? / y.int()?).into()))
+        .with_op2("=", |x, y| Ok(Bool(x.int()? == y.int()?).into()))
+        .with_op2("<", |x, y| Ok(Bool(x.int()? < y.int()?).into()))
+        .with_op2("<=", |x, y| Ok(Bool(x.int()? <= y.int()?).into()))
+        .with_op2(">", |x, y| Ok(Bool(x.int()? > y.int()?).into()))
+        .with_op2(">=", |x, y| Ok(Bool(x.int()? >= y.int()?).into()))
+        .with_op2("eq?", |x, y| Ok(Bool(x.eq(y)).into()))
+        .with_op2("cons", |x, y| Ok(Pair(x.clone(), y.clone()).into()))
+        .with_op1("not", |x| Ok(Bool(!x.bool()).into()))
+        .with_op1("car", |x| Ok(x.first()?.clone()))
+        .with_op1("cdr", |x| Ok(x.second()?.clone()))
+        .with_op1("print", |v| {
+            println!("{}", v);
+            Ok(Nil().into())
+        })
+        .with_func("begin", Box::new(|e, v| eval_list(e, v)))
+        .with_func(
+            "define",
+            Box::new(|e, v| {
+                match v.first()?.as_ref() {
+                    Symbol(name) => e.ensure(name, eval(e, v.second()?.first()?)?),
+                    Pair(name, args) => e.ensure(
+                        name.symbol()?,
+                        eval(
+                            e,
+                            &Pair(
+                                Symbol("lambda".into()).into(),
+                                Pair(args.clone(), v.second()?.clone()).into(),
+                            ),
+                        )?,
+                    ),
+                    _ => return Err("ill-formed define".into()),
+                };
+                Ok(Nil().into())
+            }),
+        )
+        .with_func(
+            "lambda",
+            Box::new(|e, v| {
+                let (e, v) = (e.clone(), v.clone());
+                Ok(Func(Box::new(move |e2, mut v2| {
+                    let (e, mut args) = (e.new_frame(), v.first()?);
+                    while let (Pair(x, n_args), Pair(y, n_v2)) = (args.as_ref(), v2.as_ref()) {
+                        e.ensure(x.symbol()?, eval(e2, y)?);
+                        args = n_args;
+                        v2 = n_v2;
+                    }
+                    eval_list(&e, v.second()?)
+                }))
+                .into())
+            }),
+        );
+    res.into()
 }
