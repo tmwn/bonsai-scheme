@@ -26,51 +26,90 @@ impl Parser {
     fn list(&mut self) -> Value {
         if self.tokens.is_empty() || self.tokens.last().unwrap() == ")" {
             self.tokens.pop();
-            return Value::None();
+            return Nil();
         }
-        Value::Pair(self.value().into(), self.list().into())
+        Pair(self.value().into(), self.list().into())
     }
     fn value(&mut self) -> Value {
         match self.tokens.pop().expect("EOF").as_str() {
             "(" => self.list(),
-            "#t" => Value::Bool(true),
-            "#f" => Value::Bool(false),
-            sym => Value::Symbol(sym.to_string()),
+            "#t" => Bool(true),
+            "#f" => Bool(false),
+            "'" => Quote(self.value().into()),
+            x => match x.parse::<i64>() {
+                Ok(i) => Int(i),
+                _ => Symbol(x.to_string()),
+            },
         }
     }
 }
 enum Value {
-    None(),
+    Nil(),
     Bool(bool),
+    Int(i64),
     Pair(Rc<Value>, Rc<Value>),
     Symbol(String),
+    Quote(Rc<Value>),
     Func(Box<dyn Fn(&Env, &Value) -> Result<Rc<Value>>>),
 }
+use Value::*;
 impl Value {
     fn first(&self) -> Result<&Value> {
-        if let Value::Pair(x, _) = self {
+        if let Pair(x, _) = self {
             return Ok(x);
         }
         Err("not pair".into())
     }
     fn second(&self) -> Result<&Value> {
-        if let Value::Pair(_, y) = self {
+        if let Pair(_, y) = self {
             return Ok(y);
         }
         Err("not pair".into())
+    }
+    fn int(&self) -> Result<&i64> {
+        if let Int(x) = self {
+            return Ok(x);
+        }
+        Err("not int".into())
+    }
+    fn bool(&self) -> bool {
+        !matches!(self, Bool(false))
     }
 }
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::None() => write!(f, "()"),
-            Value::Bool(true) => write!(f, "#t"),
-            Value::Bool(false) => write!(f, "#f"),
-            Value::Pair(x, y) => write!(f, "( {} {} )", x, y),
-            Value::Symbol(x) => write!(f, "{}", x),
-            Value::Func(_) => write!(f, "<func>"),
+            Nil() => write!(f, "()"),
+            Bool(true) => write!(f, "#t"),
+            Bool(false) => write!(f, "#f"),
+            Int(i) => write!(f, "{}", i),
+            Pair(x, y) => write!(f, "( {} {} )", x, y),
+            Symbol(x) => write!(f, "{}", x),
+            Quote(x) => write!(f, "'{}", x),
+            Func(_) => write!(f, "<func>"),
         }
     }
+}
+fn eval(e: &Env, v: &Value) -> Result<Rc<Value>> {
+    Ok(match v {
+        Nil() => Nil().into(),
+        Bool(x) => Bool(*x).into(),
+        Int(x) => Int(*x).into(),
+        Pair(x, y) => match eval(e, x)?.as_ref() {
+            Func(f) => f(e, y)?,
+            _ => return Err("not func".into()),
+        },
+        Symbol(x) => e.lookup(x)?,
+        Quote(x) => x.clone(),
+        _ => return Err(format!("{}", v).into()),
+    })
+}
+fn eval_list(e: &Env, v: &Value) -> Result<Rc<Value>> {
+    let res = eval(e, v.first()?)?;
+    if let Nil() = v.second()? {
+        return Ok(res);
+    }
+    eval_list(e, v.second()?)
 }
 struct Env {
     m: RefCell<HashMap<String, Rc<Value>>>,
@@ -89,10 +128,29 @@ impl Env {
         self
     }
     fn with_op1(self, s: &str, f: fn(&Value) -> Result<Rc<Value>>) -> Self {
-        self.ensure(
+        self.with_func(s, Box::new(move |e, v| f(&*eval(e, v.first()?)?)))
+    }
+    fn with_op2(self, s: &str, f: fn(&Value, &Value) -> Result<Rc<Value>>) -> Self {
+        self.with_func(
             s,
-            Value::Func(Box::new(move |e, v| f(&*eval(e, v.first()?)?))).into(),
+            Box::new(move |e, v| f(&*eval(e, v.first()?)?, &*eval(e, v.second()?.first()?)?)),
         )
+    }
+    fn with_fold(self, s: &str, f: fn(&Value, &Value) -> Result<Rc<Value>>) -> Self {
+        self.with_func(
+            s,
+            Box::new(move |e, mut v| {
+                let mut res = eval(e, v.first()?)?;
+                while let Value::Pair(x, _) = v.second()? {
+                    res = f(&*res, &*eval(e, &*x)?)?;
+                    v = v.second()?;
+                }
+                Ok(res)
+            }),
+        )
+    }
+    fn with_func(self, s: &str, f: Box<dyn Fn(&Env, &Value) -> Result<Rc<Value>>>) -> Self {
+        self.ensure(s, Func(f).into())
     }
 }
 fn default_env() -> Env {
@@ -100,27 +158,16 @@ fn default_env() -> Env {
         m: RefCell::new(HashMap::new()),
         next: None,
     }
+    .with_fold("+", |x, y| Ok(Int(x.int()? + y.int()?).into()))
+    .with_fold("*", |x, y| Ok(Int(x.int()? * y.int()?).into()))
+    .with_fold("and", |x, y| Ok(Bool(x.bool() && y.bool()).into()))
+    .with_fold("or", |x, y| Ok(Bool(x.bool() || y.bool()).into()))
+    .with_op2("-", |x, y| Ok(Int(x.int()? - y.int()?).into()))
+    .with_op2("/", |x, y| Ok(Int(x.int()? / y.int()?).into()))
+    .with_op2("=", |x, y| Ok(Bool(x.int()? == y.int()?).into()))
     .with_op1("print", |v| {
         println!("{}", v);
-        Ok(Value::None().into())
+        Ok(Nil().into())
     })
-}
-fn eval(e: &Env, v: &Value) -> Result<Rc<Value>> {
-    Ok(match v {
-        Value::None() => Value::None().into(),
-        Value::Bool(x) => Value::Bool(*x).into(),
-        Value::Pair(x, y) => match eval(e, x)?.as_ref() {
-            Value::Func(f) => f(e, y)?,
-            _ => return Err("not func".into()),
-        },
-        Value::Symbol(x) => e.lookup(x)?,
-        _ => return Err("BUG".into()),
-    })
-}
-fn eval_list(e: &Env, v: &Value) -> Result<Rc<Value>> {
-    let res = eval(e, v.first()?)?;
-    if let Value::None() = v.second()? {
-        return Ok(res);
-    }
-    eval_list(e, v.second()?)
+    .with_func("begin", Box::new(|e, v| eval_list(e, v)))
 }
