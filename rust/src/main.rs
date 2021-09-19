@@ -1,16 +1,14 @@
 use std::{cell::RefCell, collections::HashMap, env, error::Error, fs, rc::Rc};
-
-fn main() -> Result<(), Box<dyn Error>> {
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
+fn main() -> Result<()> {
     let code = fs::read_to_string(env::args().nth(1).ok_or("no file")?)?;
     let v = Parser::new(&code).list();
-    evaluate_list(&default_env(), &v)?;
+    eval_list(&default_env(), &v)?;
     Ok(())
 }
-
 struct Parser {
     tokens: Vec<String>,
 }
-
 impl Parser {
     fn new(code: &str) -> Self {
         Parser {
@@ -30,7 +28,7 @@ impl Parser {
             self.tokens.pop();
             return Value::None();
         }
-        new_pair(self.value(), self.list())
+        Value::Pair(self.value().into(), self.list().into())
     }
     fn value(&mut self) -> Value {
         match self.tokens.pop().expect("EOF").as_str() {
@@ -41,40 +39,27 @@ impl Parser {
         }
     }
 }
-
 enum Value {
     None(),
     Bool(bool),
     Pair(Rc<Value>, Rc<Value>),
     Symbol(String),
-    Func(fn(&Env, &Value) -> Value),
+    Func(Box<dyn Fn(&Env, &Value) -> Result<Rc<Value>>>),
 }
-
-fn new_pair(x: Value, y: Value) -> Value {
-    Value::Pair(Rc::new(x), Rc::new(y))
-}
-
-struct Env {
-    m: RefCell<HashMap<String, Rc<Value>>>,
-    next: Option<Box<Env>>,
-}
-
-impl Env {
-    fn lookup(&self, s: &str) -> Rc<Value> {
-        if let Some(v) = self.m.borrow().get(s) {
-            return Rc::clone(v);
+impl Value {
+    fn first(&self) -> Result<&Value> {
+        if let Value::Pair(x, _) = self {
+            return Ok(x);
         }
-        self.next
-            .as_ref()
-            .expect(&format!("not found: {}", s))
-            .lookup(s)
+        Err("not pair".into())
     }
-    fn ensure(self, s: &str, v: Rc<Value>) -> Self {
-        self.m.borrow_mut().insert(s.to_string(), v);
-        return self;
+    fn second(&self) -> Result<&Value> {
+        if let Value::Pair(_, y) = self {
+            return Ok(y);
+        }
+        Err("not pair".into())
     }
 }
-
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -87,57 +72,57 @@ impl std::fmt::Display for Value {
         }
     }
 }
-
+struct Env {
+    m: RefCell<HashMap<String, Rc<Value>>>,
+    next: Option<Box<Env>>,
+}
+impl Env {
+    fn lookup(&self, s: &str) -> Rc<Value> {
+        if let Some(v) = self.m.borrow().get(s) {
+            return Rc::clone(v);
+        }
+        self.next
+            .as_ref()
+            .expect(&format!("not found: {}", s))
+            .lookup(s)
+    }
+    fn ensure(self, s: &str, v: Rc<Value>) -> Self {
+        self.m.borrow_mut().insert(s.to_string(), v);
+        self
+    }
+    fn with_op1(self, s: &str, f: fn(&Value) -> Result<Rc<Value>>) -> Self {
+        self.ensure(
+            s,
+            Value::Func(Box::new(move |e, v| f(&*eval(e, v.first()?)?))).into(),
+        )
+    }
+}
 fn default_env() -> Env {
     Env {
         m: RefCell::new(HashMap::new()),
         next: None,
     }
-    .ensure(
-        "print",
-        Rc::new(Value::Func(|e, v| {
-            if let Value::Pair(ref x, _) = v {
-                let res = evaluate(e, x);
-                println!("{}", res);
-                return Value::None();
-            }
-            panic!("not pair")
-        })),
-    )
+    .with_op1("print", |v| {
+        println!("{}", v);
+        Ok(Value::None().into())
+    })
 }
-
-fn evaluate(e: &Env, v: &Value) -> Rc<Value> {
-    match v {
+fn eval(e: &Env, v: &Value) -> Result<Rc<Value>> {
+    Ok(match v {
         Value::None() => Rc::new(Value::None()),
         Value::Bool(x) => Rc::new(Value::Bool(*x)),
-        Value::Pair(ref x, ref y) => {
-            if let Value::Func(ref f) = &*evaluate(e, x) {
-                Rc::new(f(e, y))
-            } else {
-                panic!("not func")
-            }
-        }
+        Value::Pair(x, y) => match eval(e, x)?.as_ref() {
+            Value::Func(f) => f(e, y)?,
+            _ => return Err("not func".into()),
+        },
         Value::Symbol(x) => e.lookup(x),
-        _ => panic!("BUG"),
-    }
+        _ => return Err("BUG".into()),
+    })
 }
-
-fn to_vec(v: &Value) -> Result<Vec<Rc<Value>>, String> {
-    match v {
-        Value::Pair(ref x, ref y) => {
-            let mut res = vec![x.clone()];
-            res.append(&mut to_vec(y)?);
-            Ok(res)
-        }
-        Value::None() => Ok(Vec::new()),
-        _ => Err(format!("unexpected type {}", v)),
+fn eval_list(e: &Env, v: &Value) -> Result<Rc<Value>> {
+    let res = eval(e, v.first()?)?;
+    if let Value::None() = v.second()? {
+        return Ok(res);
     }
-}
-
-fn evaluate_list(e: &Env, v: &Value) -> Result<Rc<Value>, String> {
-    let mut res = Rc::new(Value::None());
-    for x in to_vec(v)? {
-        res = evaluate(e.clone(), &x);
-    }
-    Ok(res)
+    eval_list(e, v.second()?)
 }
