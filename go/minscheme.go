@@ -28,12 +28,10 @@ const (
 	KindPair
 	KindSymbol
 	KindFunc
-	KindFunc2
 	KindQuote
 )
 
 type Func func(e *Env, v *Value) *Value
-type Func2 func(e *Env, v *Value) (*Env, *Value)
 
 type Value struct {
 	kind    Kind
@@ -42,8 +40,7 @@ type Value struct {
 	symbol  string
 	boolVal bool
 	intVal  int
-	func1   Func
-	func2   Func2
+	fun     Func
 	quoted  *Value
 }
 
@@ -52,8 +49,7 @@ func newBool(x bool) *Value      { return &Value{kind: KindBool, boolVal: x} }
 func newInt(x int) *Value        { return &Value{kind: KindInt, intVal: x} }
 func newPair(x, y *Value) *Value { return &Value{kind: KindPair, first: x, second: y} }
 func newSymbol(x string) *Value  { return &Value{kind: KindSymbol, symbol: x} }
-func newFunc(f Func) *Value      { return &Value{kind: KindFunc, func1: f} }
-func newFunc2(f Func2) *Value    { return &Value{kind: KindFunc2, func2: f} }
+func newFunc(f Func) *Value      { return &Value{kind: KindFunc, fun: f} }
 func newQuote(x *Value) *Value   { return &Value{kind: KindQuote, quoted: x} }
 
 func (v *Value) String() string {
@@ -76,8 +72,6 @@ func (v *Value) String() string {
 		return "'" + v.quoted.String()
 	case KindFunc:
 		return "<func>"
-	case KindFunc2:
-		return "<func2>"
 	}
 	panic("BUG")
 }
@@ -107,16 +101,6 @@ func (v *Value) eq(u *Value) bool {
 		return v.symbol == u.symbol
 	}
 	return false
-}
-
-func (v *Value) call2(e *Env, u *Value) (*Env, *Value) {
-	switch v.kind {
-	case KindFunc:
-		return e, v.func1(e, u)
-	case KindFunc2:
-		return v.func2(e, u)
-	}
-	panic("call2: " + v.String())
 }
 
 func next() byte {
@@ -187,9 +171,10 @@ func value() *Value {
 }
 
 type Env struct {
-	symbol string
-	value  *Value
-	next   *Env
+	symbol    string
+	value     *Value
+	next      *Env
+	nextFrame *Env
 }
 
 func (e *Env) lookup(s string) *Value {
@@ -198,6 +183,9 @@ func (e *Env) lookup(s string) *Value {
 	}
 	if e.symbol == s {
 		return e.value
+	}
+	if e.nextFrame != nil {
+		return e.nextFrame.lookup(s)
 	}
 	return e.next.lookup(s)
 }
@@ -210,7 +198,37 @@ func (e *Env) set(s string, v *Value) {
 		e.value = v
 		return
 	}
+	if e.nextFrame != nil {
+		e.nextFrame.set(s, v)
+		return
+	}
 	e.next.set(s, v)
+}
+
+func (e *Env) ensure(s string, v *Value) { // ensure the value within frame
+	if e == nil {
+		panic("ensure: " + s)
+	}
+	if e.symbol == s {
+		e.value = v
+		return
+	}
+	if e.next != nil {
+		e.next.ensure(s, v)
+		return
+	}
+	e.next = &Env{
+		symbol:    s,
+		value:     v,
+		nextFrame: e.nextFrame,
+	}
+	e.nextFrame = nil
+}
+
+func (e *Env) newFrame() *Env {
+	return &Env{
+		nextFrame: e,
+	}
 }
 
 func (e *Env) with(symbol string, value *Value) *Env {
@@ -219,16 +237,6 @@ func (e *Env) with(symbol string, value *Value) *Env {
 		value:  value,
 		next:   e,
 	}
-}
-
-func (e *Env) add(symbol string, value *Value) {
-	e.next = &Env{
-		symbol: e.symbol,
-		value:  e.value,
-		next:   e.next,
-	}
-	e.symbol = symbol
-	e.value = value
 }
 
 func (e *Env) withOp1(symbol string, f func(x *Value) *Value) *Env {
@@ -246,6 +254,14 @@ func (e *Env) withOp2(symbol string, f func(x, y *Value) *Value) *Env {
 	}))
 }
 
+func (e *Env) fold(v *Value, f func(x, y *Value) *Value) *Value {
+	res := e.eval(v.first)
+	if v.second.kind == KindNone {
+		return res
+	}
+	return f(res, e.fold(v.second, f))
+}
+
 func (e *Env) withFoldop(symbol string, f func(x, y *Value) *Value) *Env {
 	return e.with(symbol, newFunc(func(e *Env, v *Value) *Value {
 		return e.fold(v, f)
@@ -253,38 +269,28 @@ func (e *Env) withFoldop(symbol string, f func(x, y *Value) *Value) *Env {
 }
 
 func (e *Env) eval(v *Value) *Value {
-	_, v = e.eval2(v)
-	return v
-}
-
-func (e *Env) eval2(v *Value) (*Env, *Value) {
+	if e == nil {
+		panic("eval: e = nil")
+	}
 	switch v.kind {
 	case KindNone, KindBool, KindInt:
-		return e, v
+		return v
 	case KindQuote:
-		return e, v.quoted
+		return v.quoted
 	case KindPair:
-		return e.eval(v.first).call2(e, v.second)
+		return e.eval(v.first).fun(e, v.second)
 	case KindSymbol:
-		return e, e.lookup(v.symbol)
+		return e.lookup(v.symbol)
 	}
-	panic("eval2: " + v.symbol)
+	panic("eval: " + v.symbol)
 }
 
 func (e *Env) evalList(v *Value) *Value {
-	e, res := e.eval2(v.first)
-	if v.second.kind == KindNone {
-		return res
-	}
-	return e.evalList(v.second)
-}
-
-func (e *Env) fold(v *Value, f func(x, y *Value) *Value) *Value {
 	res := e.eval(v.first)
 	if v.second.kind == KindNone {
 		return res
 	}
-	return f(res, e.fold(v.second, f))
+	return e.evalList(v.second)
 }
 
 func symValIter(kvs *Value, f func(sym string, val *Value)) {
@@ -323,7 +329,7 @@ func newEnv() *Env {
 		withOp2("eq?", func(x, y *Value) *Value { return newBool(x.eq(y)) }).
 		withOp1("print", func(x *Value) *Value { fmt.Println(x); return newNone() }).
 		with("begin", newFunc(func(e *Env, v *Value) *Value { return e.evalList(v) })).
-		with("define", newFunc2(func(e *Env, v *Value) (*Env, *Value) {
+		with("define", newFunc(func(e *Env, v *Value) *Value {
 			funArgs, body := v.first, v.second
 			var name, value *Value
 			if funArgs.kind == KindSymbol {
@@ -339,13 +345,12 @@ func newEnv() *Env {
 					),
 				)
 			}
-			e.add(name.symbol, nil)
-			e.value = e.eval(value)
-			return e, newNone()
+			e.ensure(name.symbol, e.eval(value))
+			return newNone()
 		})).
 		with("lambda", newFunc(func(e *Env, v *Value) *Value {
 			return newFunc(func(e2 *Env, v2 *Value) *Value {
-				ne := e
+				ne := e.newFrame()
 				zipIter(v.first, v2, func(x, y *Value) {
 					val := e2.eval(y)
 					ne = ne.with(x.symbol, val)
