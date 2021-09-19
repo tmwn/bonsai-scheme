@@ -15,7 +15,7 @@ func main() {
 	}
 	tokenize(string(code))
 
-	newEnv().evalList(list())
+	defaultEnv().evalList(list())
 }
 
 func tokenize(code string) { // update tokens
@@ -46,7 +46,7 @@ func value() *Value {
 	t := token()
 	if t == "(" {
 		res := list()
-		token() // skip )
+		token() // skip ")"
 		return res
 	} else if t[0] == '#' {
 		return newBool(t[1] == 't')
@@ -244,9 +244,8 @@ func zipIter(xs, ys *Value, f func(x, y *Value)) {
 	}
 }
 
-func newEnv() *Env {
-	env := &Env{m: make(map[string]*Value)}
-	return env.
+func defaultEnv() *Env {
+	return ((*Env)(nil)).newFrame().
 		withFoldop("+", func(x, y *Value) *Value { return newInt(x.intVal + y.intVal) }).
 		withFoldop("*", func(x, y *Value) *Value { return newInt(x.intVal * y.intVal) }).
 		withOp2("-", func(x, y *Value) *Value { return newInt(x.intVal - y.intVal) }).
@@ -273,25 +272,18 @@ func newEnv() *Env {
 				value = body.first
 			} else {
 				name = funArgs.first
-				value = newPair(
-					newSymbol("lambda"),
-					newPair(
-						funArgs.second,
-						body,
-					),
-				)
+				value = newPair(newSymbol("lambda"), newPair(funArgs.second, body))
 			}
 			e.ensure(name.symbol, e.eval(value))
 			return newNone()
 		})).
 		ensure("lambda", newFunc(func(e *Env, v *Value) *Value {
 			return newFunc(func(e2 *Env, v2 *Value) *Value {
-				ne := e.newFrame()
+				e := e.newFrame()
 				zipIter(v.first, v2, func(x, y *Value) {
-					val := e2.eval(y)
-					ne = ne.ensure(x.symbol, val)
+					e.ensure(x.symbol, e2.eval(y))
 				})
-				return ne.evalList(v.second)
+				return e.evalList(v.second)
 			})
 		})).
 		ensure("let", newFunc(func(e *Env, v *Value) *Value {
@@ -311,7 +303,7 @@ func newEnv() *Env {
 			e = e.newFrame()
 			symValIter(v.first, func(sym string, val *Value) {
 				e.ensure(sym, nil)
-				e = e.ensure(sym, e.eval(val))
+				e.ensure(sym, e.eval(val))
 			})
 			return e.evalList(v.second)
 		})).
