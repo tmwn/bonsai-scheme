@@ -2,43 +2,36 @@ use std::{cell::RefCell, collections::HashMap, env, error::Error, fs, rc::Rc};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn main() -> Result<()> {
     let code = fs::read_to_string(env::args().nth(1).ok_or("no file")?)?;
-    let v = Parser::new(&code).list();
-    eval_list(&default_env(), to_vec(Rc::new(v)))?;
+    eval_list(&default_env(), vec(&Parser::new(code).list()))?;
     Ok(())
 }
 struct Parser {
-    tokens: Vec<String>,
+    tokens_rev: Vec<String>,
 }
 impl Parser {
-    fn new(code: &str) -> Self {
-        Parser {
-            tokens: code
-                .replace("(", " ( ")
-                .replace(")", " ) ")
-                .replace("'", "' ")
-                .split_ascii_whitespace()
-                .rev()
-                .filter(|x| !x.is_empty())
-                .map(|x| x.to_owned())
-                .collect(),
-        }
+    fn new(mut code: String) -> Self {
+        let cs = "()'".chars();
+        cs.for_each(|c| code = code.replace(c, &format!(" {} ", c)));
+        let tokens = code.split_whitespace().filter(|x| !x.is_empty());
+        let tokens_rev = tokens.rev().map(|x| x.to_owned()).collect();
+        Self { tokens_rev }
     }
-    fn list(&mut self) -> Val {
-        if self.tokens.is_empty() || self.tokens.last().unwrap() == ")" {
-            self.tokens.pop();
-            return Nil();
+    fn list(&mut self) -> V {
+        if self.tokens_rev.is_empty() || self.tokens_rev.last().unwrap() == ")" {
+            self.tokens_rev.pop();
+            return Nil().into();
         }
-        new_pair(&self.value().into(), &self.list().into())
+        Pair(self.value().into(), self.list().into()).into()
     }
-    fn value(&mut self) -> Val {
-        match self.tokens.pop().expect("EOF").as_str() {
+    fn value(&mut self) -> V {
+        match self.tokens_rev.pop().expect("EOF").as_str() {
             "(" => self.list(),
-            "#t" => Bool(true),
-            "#f" => Bool(false),
-            "'" => Quote(self.value().into()),
+            "#t" => Bool(true).into(),
+            "#f" => Bool(false).into(),
+            "'" => Quote(self.value()).into(),
             x => match x.parse::<i64>() {
-                Ok(i) => Int(i),
-                _ => Symbol(x.to_string()),
+                Ok(i) => Int(i).into(),
+                _ => Symbol(x.into()).into(),
             },
         }
     }
@@ -47,15 +40,16 @@ enum Val {
     Nil(),
     Bool(bool),
     Int(i64),
-    Pair(RefCell<Rc<Val>>, RefCell<Rc<Val>>),
+    Pair(RefCell<V>, RefCell<V>),
     Symbol(String),
-    Quote(Rc<Val>),
-    Func(Box<dyn Fn(&Rc<Env>, Rc<Val>) -> Result<Rc<Val>>>),
+    Quote(V),
+    Func(Box<dyn Fn(&Rc<Env>, V) -> Result<V>>),
 }
+type V = Rc<Val>;
 
 use Val::*;
 impl Val {
-    fn pair(&self) -> Result<(Rc<Val>, Rc<Val>)> {
+    fn pair(&self) -> Result<(V, V)> {
         match self {
             Pair(x, y) => Ok((x.borrow().clone(), y.borrow().clone())),
             _ => Err("pair: not pair".into()),
@@ -87,12 +81,15 @@ impl Val {
         }
     }
 }
-fn new_pair(x: &Rc<Val>, y: &Rc<Val>) -> Val {
-    Pair(RefCell::new(x.clone()), RefCell::new(y.clone()))
+fn to_list(v: &[V]) -> V {
+    if let Some(x) = v.last() {
+        return Pair(x.clone().into(), to_list(&v[0..v.len() - 1]).into()).into();
+    }
+    Nil().into()
 }
-fn to_vec(v: Rc<Val>) -> Vec<Rc<Val>> {
+fn vec(v: &V) -> Vec<V> {
     match v.pair() {
-        Ok((x, y)) => [vec![x], to_vec(y)].concat(),
+        Ok((x, y)) => [vec(&y), vec![x]].concat(),
         _ => vec![],
     }
 }
@@ -110,56 +107,56 @@ impl std::fmt::Display for Val {
         }
     }
 }
-fn eval(e: &Rc<Env>, v: Rc<Val>) -> Result<Rc<Val>> {
+fn eval(e: &Rc<Env>, v: V) -> Result<V> {
     Ok(match v.as_ref() {
         Nil() | Bool(_) | Int(_) => v,
         Pair(x, y) => match eval(e, x.borrow().clone())?.as_ref() {
             Func(f) => f(e, y.borrow().clone())?,
-            _ => return Err("not func".into()),
+            x => return Err(format!("not func: {}", x).into()),
         },
         Symbol(x) => e.lookup(x)?,
         Quote(x) => x.clone(),
         _ => return Err(format!("{}", v).into()),
     })
 }
-fn eval_list(e: &Rc<Env>, v: Vec<Rc<Val>>) -> Result<Rc<Val>> {
-    let res = v.into_iter().map(|x| eval(e, x)).last();
+fn eval_list(e: &Rc<Env>, v: Vec<V>) -> Result<V> {
+    let res = v.into_iter().rev().map(|x| eval(e, x.clone())).last();
     res.unwrap_or(Err("empty".into()))
 }
 struct Env {
-    m: RefCell<HashMap<String, Rc<Val>>>,
+    m: RefCell<HashMap<String, V>>,
     next: Option<Rc<Env>>,
 }
 impl Env {
-    fn lookup(&self, s: &str) -> Result<Rc<Val>> {
+    fn lookup(&self, s: &str) -> Result<V> {
         match (self.m.borrow().get(s), self.next.as_ref()) {
             (Some(v), _) => Ok(Rc::clone(v)),
             (_, Some(e)) => e.lookup(s),
             _ => Err(format!("not found: {}", s).into()),
         }
     }
-    fn ensure(self: &Rc<Self>, s: &str, v: Rc<Val>) -> Rc<Self> {
+    fn ensure(self: &Rc<Self>, s: &str, v: V) -> Rc<Self> {
         self.m.borrow_mut().insert(s.to_string(), v);
         self.clone()
     }
-    fn with_fold(self: Rc<Self>, s: &str, f: fn(Rc<Val>, Rc<Val>) -> Result<Rc<Val>>) -> Rc<Self> {
+    fn with_fold(self: Rc<Self>, s: &str, f: fn(V, V) -> Result<V>) -> Rc<Self> {
         let g = move |e: &Rc<Env>, v| {
-            let l = to_vec(v).into_iter().map(|v| eval(e, v)).into_iter();
+            let l = vec(&v).into_iter().map(|v| eval(e, v)).into_iter();
             l.reduce(|x, y| f(x?, y?)).unwrap_or(Err("empty".into()))
         };
         self.ensure(s, Func(Box::new(g)).into())
     }
-    fn with_ops(self: Rc<Self>, s: &str, f: fn(Vec<Rc<Val>>) -> Result<Rc<Val>>) -> Rc<Self> {
+    fn with_ops(self: Rc<Self>, s: &str, f: fn(Vec<V>) -> Result<V>) -> Rc<Self> {
         let g = move |e: &Rc<Env>, v| {
-            let l = to_vec(v).into_iter().map(|v| eval(e, v));
+            let l = vec(&v).into_iter().map(|v| eval(e, v));
             f(l.collect::<Result<_>>()?)
         };
         self.ensure(s, Func(Box::new(g)).into())
     }
-    fn with_func(self: Rc<Self>, s: &str, f: fn(&Rc<Env>, Rc<Val>) -> Result<Rc<Val>>) -> Rc<Self> {
-        self.ensure(s, Func(Box::new(f)).into())
+    fn with_form(self: Rc<Self>, s: &str, f: fn(&Rc<Env>, Vec<V>) -> Result<V>) -> Rc<Self> {
+        self.ensure(s, Func(Box::new(move |e, v| f(e, vec(&v)))).into())
     }
-    fn set(&self, s: &str, v: Rc<Val>) -> Result<()> {
+    fn set(&self, s: &str, v: V) -> Result<()> {
         if let Some(x) = self.m.borrow_mut().get_mut(s) {
             *x = v;
             return Ok(());
@@ -179,15 +176,17 @@ fn default_env() -> Rc<Env> {
         .with_fold("*", |x, y| Ok(Int(x.int()? * y.int()?).into()))
         .with_fold("and", |x, y| Ok(Bool(x.bool() && y.bool()).into()))
         .with_fold("or", |x, y| Ok(Bool(x.bool() || y.bool()).into()))
-        .with_ops("-", |v| Ok(Int(v[0].int()? - v[1].int()?).into()))
-        .with_ops("/", |v| Ok(Int(v[0].int()? / v[1].int()?).into()))
-        .with_ops("=", |v| Ok(Bool(v[0].int()? == v[1].int()?).into()))
-        .with_ops("<", |v| Ok(Bool(v[0].int()? < v[1].int()?).into()))
-        .with_ops("<=", |v| Ok(Bool(v[0].int()? <= v[1].int()?).into()))
-        .with_ops(">", |v| Ok(Bool(v[0].int()? > v[1].int()?).into()))
-        .with_ops(">=", |v| Ok(Bool(v[0].int()? >= v[1].int()?).into()))
-        .with_ops("eq?", |v| Ok(Bool(v[0].eq(&v[1])).into()))
-        .with_ops("cons", |v| Ok(new_pair(&v[0], &v[1]).into()))
+        .with_ops("-", |v| Ok(Int(v[1].int()? - v[0].int()?).into()))
+        .with_ops("/", |v| Ok(Int(v[1].int()? / v[0].int()?).into()))
+        .with_ops("=", |v| Ok(Bool(v[1].int()? == v[0].int()?).into()))
+        .with_ops("<", |v| Ok(Bool(v[1].int()? < v[0].int()?).into()))
+        .with_ops("<=", |v| Ok(Bool(v[1].int()? <= v[0].int()?).into()))
+        .with_ops(">", |v| Ok(Bool(v[1].int()? > v[0].int()?).into()))
+        .with_ops(">=", |v| Ok(Bool(v[1].int()? >= v[0].int()?).into()))
+        .with_ops("eq?", |v| Ok(Bool(v[1].eq(&v[0])).into()))
+        .with_ops("cons", |v| {
+            Ok(Pair(v[1].clone().into(), v[0].clone().into()).into())
+        })
         .with_ops("not", |v| Ok(Bool(!v[0].bool()).into()))
         .with_ops("car", |v| Ok(v[0].pair()?.0))
         .with_ops("cdr", |v| Ok(v[0].pair()?.1))
@@ -195,81 +194,75 @@ fn default_env() -> Rc<Env> {
             println!("{}", v[0]);
             Ok(Nil().into())
         })
-        .with_func("begin", |e, v| eval_list(e, to_vec(v)))
-        .with_func("define", |e, v| {
-            match (v.pair()?.0.as_ref(), v.pair()?.1) {
-                (Symbol(name), _) => e.ensure(name, eval(e, v.pair()?.1.pair()?.0)?),
-                (Pair(name, args), body) => {
-                    let arg_body = new_pair(&args.borrow(), &body).into();
-                    let l = new_pair(&Symbol("lambda".into()).into(), &arg_body);
-                    e.ensure(name.borrow().symbol()?, eval(e, Rc::new(l))?)
+        .with_form("begin", eval_list)
+        .with_form("define", |e, mut v| {
+            let name_params = v.pop().ok_or("empty")?;
+            match vec(&name_params).as_slice() {
+                [params @ .., name] => {
+                    let l = [v, vec![to_list(params), Symbol("lambda".into()).into()]].concat();
+                    e.ensure(name.symbol()?, eval(e, to_list(&l))?)
                 }
-                _ => return Err("ill-formed define".into()),
+                _ => e.ensure(name_params.symbol()?, eval(e, v[0].clone())?),
             };
             Ok(Nil().into())
         })
-        .with_func("lambda", |e, v| {
-            let e = e.clone();
-            Ok(Rc::new(Func(Box::new(move |e2, mut v2| {
-                let (e, mut args) = (Env::new(Some(e.clone())), v.pair()?.0);
-                while let (Ok((x, n_args)), Ok((y, n_v2))) = (args.pair(), v2.pair()) {
+        .with_form("lambda", |e, mut v| {
+            let (e, params) = (e.clone(), v.pop().ok_or("empty")?);
+            Ok(Rc::new(Func(Box::new(move |e2, v2| {
+                let (e, mut params, mut args) = (Env::new(Some(e.clone())), vec(&params), vec(&v2));
+                while let (Some(x), Some(y)) = (params.pop(), args.pop()) {
                     e.ensure(x.symbol()?, eval(e2, y)?);
-                    args = n_args;
-                    v2 = n_v2;
                 }
-                eval_list(&e, to_vec(v.pair()?.1))
+                eval_list(&e, v.clone())
             }))))
         })
-        .with_func("let", |e, v| {
-            let (e2, mut kvs) = (Env::new(Some(e.clone())), v.pair()?.0);
-            while let Ok((kv, n_kvs)) = kvs.pair() {
+        .with_form("let", |e, mut v| {
+            let (e2, mut kvs) = (Env::new(Some(e.clone())), vec(&v.pop().ok_or("empty")?));
+            while let Some(kv) = kvs.pop() {
                 e2.ensure(kv.pair()?.0.symbol()?, eval(e, kv.pair()?.1.pair()?.0)?);
-                kvs = n_kvs;
             }
-            eval_list(&e2, to_vec(v.pair()?.1))
+            eval_list(&e2, v)
         })
-        .with_func("let*", |e, v| {
-            let (mut e, mut kvs) = (e.clone(), v.pair()?.0);
-            while let Ok((ref kv, n_kvs)) = kvs.pair() {
+        .with_form("let*", |e, mut v| {
+            let (mut e, mut kvs) = (e.clone(), vec(&v.pop().ok_or("empty")?));
+            while let Some(kv) = kvs.pop() {
                 let x = eval(&e, kv.pair()?.1.pair()?.0)?;
                 e = Env::new(Some(e)).ensure(kv.pair()?.0.symbol()?, x);
-                kvs = n_kvs;
             }
-            eval_list(&e, to_vec(v.pair()?.1))
+            eval_list(&e, v)
         })
-        .with_func("letrec", |e, v| {
-            let (e, mut kvs) = (Env::new(Some(e.clone())), v.pair()?.0);
-            while let Ok((ref kv, n_kvs)) = kvs.pair() {
+        .with_form("letrec", |e, mut v| {
+            let (e, mut kvs) = (Env::new(Some(e.clone())), vec(&v.pop().ok_or("empty")?));
+            while let Some(kv) = kvs.pop() {
                 e.ensure(kv.pair()?.0.symbol()?, Nil().into());
                 e.ensure(kv.pair()?.0.symbol()?, eval(&e, kv.pair()?.1.pair()?.0)?);
-                kvs = n_kvs;
             }
-            eval_list(&e, to_vec(v.pair()?.1))
+            eval_list(&e, v)
         })
-        .with_func("if", |e, v| match eval(e, v.pair()?.0)?.bool() {
-            true => eval(e, v.pair()?.1.pair()?.0),
-            false => eval(e, v.pair()?.1.pair()?.1.pair()?.0),
+        .with_form("if", |e, v| match eval(e, v[2].clone())?.bool() {
+            true => eval(e, v[1].clone()),
+            false => eval(e, v[0].clone()),
         })
-        .with_func("cond", |e, mut v| loop {
-            if eval(e, v.pair()?.0.pair()?.0)?.bool() {
-                break eval(e, v.pair()?.0.pair()?.1.pair()?.0);
+        .with_form("cond", |e, mut v| loop {
+            let u = vec(&v.pop().ok_or("empty")?);
+            if eval(e, u[1].clone())?.bool() {
+                return eval(e, u[0].clone());
             }
-            v = v.pair()?.1;
         })
-        .with_func("set!", |e, v| {
-            e.set(v.pair()?.0.symbol()?, eval(e, v.pair()?.1.pair()?.0)?)?;
+        .with_form("set!", |e, v| {
+            e.set(v[1].symbol()?, eval(e, v[0].clone())?)?;
             Ok(Nil().into())
         })
-        .with_func("set-car!", |e, v| {
-            match eval(e, v.pair()?.0)?.as_ref() {
-                Pair(x, _) => *x.borrow_mut() = eval(e, v.pair()?.1.pair()?.0)?,
+        .with_form("set-car!", |e, v| {
+            match eval(e, v[1].clone())?.as_ref() {
+                Pair(x, _) => *x.borrow_mut() = eval(e, v[0].clone())?,
                 _ => return Err("set-car: not pair".into()),
             };
             Ok(Nil().into())
         })
-        .with_func("set-cdr!", |e, v| {
-            match eval(e, v.pair()?.0)?.as_ref() {
-                Pair(_, x) => *x.borrow_mut() = eval(e, v.pair()?.1.pair()?.0)?,
+        .with_form("set-cdr!", |e, v| {
+            match eval(e, v[1].clone())?.as_ref() {
+                Pair(_, x) => *x.borrow_mut() = eval(e, v[0].clone())?,
                 _ => return Err("set-cdr: not pair".into()),
             };
             Ok(Nil().into())
