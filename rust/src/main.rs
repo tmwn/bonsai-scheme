@@ -1,34 +1,32 @@
-use std::{cell::RefCell, collections::HashMap, env, error::Error, fs, rc::Rc};
+use std::{cell, collections, env, error::Error, fs, rc::Rc};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn main() -> Result<()> {
-    let code = fs::read_to_string(env::args().nth(1).ok_or("no file")?)?;
+    let code = fs::read_to_string(env::args().nth(1).ok_or("no file")?)? + " $";
     eval_list(&default_env(), vec(&Parser::new(code).list()))?;
     Ok(())
 }
 struct Parser {
-    tokens_rev: Vec<String>,
+    tokens: collections::VecDeque<String>,
 }
 impl Parser {
     fn new(mut code: String) -> Self {
         let cs = "()'".chars();
         cs.for_each(|c| code = code.replace(c, &format!(" {} ", c)));
-        let tokens = code.split_whitespace().filter(|x| !x.is_empty());
-        let tokens_rev = tokens.rev().map(|x| x.to_owned()).collect();
-        Self { tokens_rev }
+        let tokens = code.split_whitespace().map(ToOwned::to_owned).collect();
+        Self { tokens }
     }
     fn list(&mut self) -> V {
-        if self.tokens_rev.is_empty() || self.tokens_rev.last().unwrap() == ")" {
-            self.tokens_rev.pop();
-            return Nil().into();
+        match self.tokens.pop_front().expect("empty") {
+            x if &x == ")" || &x == "$" => Nil().into(),
+            x => Pair(self.value(Some(x)).into(), self.list().into()).into(),
         }
-        Pair(self.value().into(), self.list().into()).into()
     }
-    fn value(&mut self) -> V {
-        match self.tokens_rev.pop().expect("EOF").as_str() {
+    fn value(&mut self, first: Option<String>) -> V {
+        match &*first.unwrap_or_else(|| self.tokens.pop_front().expect("empty")) {
             "(" => self.list(),
             "#t" => Bool(true).into(),
             "#f" => Bool(false).into(),
-            "'" => Quote(self.value()).into(),
+            "'" => Quote(self.value(None)).into(),
             x => match x.parse::<i64>() {
                 Ok(i) => Int(i).into(),
                 _ => Symbol(x.into()).into(),
@@ -40,13 +38,12 @@ enum Val {
     Nil(),
     Bool(bool),
     Int(i64),
-    Pair(RefCell<V>, RefCell<V>),
+    Pair(cell::RefCell<V>, cell::RefCell<V>),
     Symbol(String),
     Quote(V),
     Func(Box<dyn Fn(&Rc<Env>, V) -> Result<V>>),
 }
 type V = Rc<Val>;
-
 use Val::*;
 impl Val {
     fn pair(&self) -> Result<(V, V)> {
@@ -107,10 +104,10 @@ impl std::fmt::Display for Val {
         }
     }
 }
-fn eval(e: &Rc<Env>, v: V) -> Result<V> {
+fn eval(e: &Rc<Env>, v: &V) -> Result<V> {
     Ok(match v.as_ref() {
-        Nil() | Bool(_) | Int(_) => v,
-        Pair(x, y) => match eval(e, x.borrow().clone())?.as_ref() {
+        Nil() | Bool(_) | Int(_) => v.clone(),
+        Pair(x, y) => match eval(e, &x.borrow())?.as_ref() {
             Func(f) => f(e, y.borrow().clone())?,
             x => return Err(format!("not func: {}", x).into()),
         },
@@ -120,41 +117,41 @@ fn eval(e: &Rc<Env>, v: V) -> Result<V> {
     })
 }
 fn eval_list(e: &Rc<Env>, v: Vec<V>) -> Result<V> {
-    let res = v.into_iter().rev().map(|x| eval(e, x.clone())).last();
+    let res = v.into_iter().rev().map(|x| eval(e, &x)).last();
     res.unwrap_or(Err("empty".into()))
 }
 struct Env {
-    m: RefCell<HashMap<String, V>>,
+    m: cell::RefCell<collections::HashMap<String, V>>,
     next: Option<Rc<Env>>,
 }
 impl Env {
     fn lookup(&self, s: &str) -> Result<V> {
         match (self.m.borrow().get(s), self.next.as_ref()) {
-            (Some(v), _) => Ok(Rc::clone(v)),
+            (Some(v), _) => Ok(v.clone()),
             (_, Some(e)) => e.lookup(s),
             _ => Err(format!("not found: {}", s).into()),
         }
     }
-    fn ensure(self: &Rc<Self>, s: &str, v: V) -> Rc<Self> {
-        self.m.borrow_mut().insert(s.to_string(), v);
+    fn ensure<T: Into<V>>(self: &Rc<Self>, s: &str, v: T) -> Rc<Self> {
+        self.m.borrow_mut().insert(s.to_string(), v.into());
         self.clone()
     }
     fn with_fold(self: Rc<Self>, s: &str, f: fn(V, V) -> Result<V>) -> Rc<Self> {
         let g = move |e: &Rc<Env>, v| {
-            let l = vec(&v).into_iter().map(|v| eval(e, v)).into_iter();
+            let l = vec(&v).into_iter().map(|v| eval(e, &v)).into_iter();
             l.reduce(|x, y| f(x?, y?)).unwrap_or(Err("empty".into()))
         };
-        self.ensure(s, Func(Box::new(g)).into())
+        self.ensure(s, Func(Box::new(g)))
     }
-    fn with_ops(self: Rc<Self>, s: &str, f: fn(Vec<V>) -> Result<V>) -> Rc<Self> {
+    fn with_ops(self: Rc<Self>, s: &str, f: fn(Vec<V>) -> Result<V>) -> Rc<Env> {
         let g = move |e: &Rc<Env>, v| {
-            let l = vec(&v).into_iter().map(|v| eval(e, v));
-            f(l.collect::<Result<_>>()?)
+            let l = vec(&v).into_iter().map(|v| eval(e, &v));
+            f(l.collect::<Result<_>>()?).map(Into::into)
         };
-        self.ensure(s, Func(Box::new(g)).into())
+        self.ensure(s, Func(Box::new(g)))
     }
     fn with_form(self: Rc<Self>, s: &str, f: fn(&Rc<Env>, Vec<V>) -> Result<V>) -> Rc<Self> {
-        self.ensure(s, Func(Box::new(move |e, v| f(e, vec(&v)))).into())
+        self.ensure(s, Func(Box::new(move |e, v| f(e, vec(&v)))))
     }
     fn set(&self, s: &str, v: V) -> Result<()> {
         if let Some(x) = self.m.borrow_mut().get_mut(s) {
@@ -165,7 +162,7 @@ impl Env {
     }
     fn new(next: Option<Rc<Env>>) -> Rc<Self> {
         Rc::new(Env {
-            m: HashMap::new().into(),
+            m: collections::HashMap::new().into(),
             next,
         })
     }
@@ -200,9 +197,9 @@ fn default_env() -> Rc<Env> {
             match vec(&name_params).as_slice() {
                 [params @ .., name] => {
                     let l = [v, vec![to_list(params), Symbol("lambda".into()).into()]].concat();
-                    e.ensure(name.symbol()?, eval(e, to_list(&l))?)
+                    e.ensure(name.symbol()?, eval(e, &to_list(&l))?)
                 }
-                _ => e.ensure(name_params.symbol()?, eval(e, v[0].clone())?),
+                _ => e.ensure(name_params.symbol()?, eval(e, &v[0])?),
             };
             Ok(Nil().into())
         })
@@ -211,61 +208,61 @@ fn default_env() -> Rc<Env> {
             Ok(Rc::new(Func(Box::new(move |e2, v2| {
                 let (e, mut params, mut args) = (Env::new(Some(e.clone())), vec(&params), vec(&v2));
                 while let (Some(x), Some(y)) = (params.pop(), args.pop()) {
-                    e.ensure(x.symbol()?, eval(e2, y)?);
+                    e.ensure(x.symbol()?, eval(e2, &y)?);
                 }
                 eval_list(&e, v.clone())
             }))))
         })
         .with_form("let", |e, mut v| {
             let (e2, mut kvs) = (Env::new(Some(e.clone())), vec(&v.pop().ok_or("empty")?));
-            while let Some(kv) = kvs.pop() {
-                e2.ensure(kv.pair()?.0.symbol()?, eval(e, kv.pair()?.1.pair()?.0)?);
+            while let Some(vk) = kvs.pop().map(|kv| (vec(&kv))) {
+                e2.ensure(vk[1].symbol()?, eval(e, &vk[0])?);
             }
             eval_list(&e2, v)
         })
         .with_form("let*", |e, mut v| {
-            let (mut e, mut kvs) = (e.clone(), vec(&v.pop().ok_or("empty")?));
-            while let Some(kv) = kvs.pop() {
-                let x = eval(&e, kv.pair()?.1.pair()?.0)?;
-                e = Env::new(Some(e)).ensure(kv.pair()?.0.symbol()?, x);
+            let (mut e2, mut kvs) = (Env::new(Some(e.clone())), vec(&v.pop().ok_or("empty")?));
+            while let Some(vk) = kvs.pop().map(|kv| (vec(&kv))) {
+                let x = eval(&e2, &vk[0])?;
+                e2 = Env::new(Some(e2)).ensure(vk[1].symbol()?, x);
             }
-            eval_list(&e, v)
+            eval_list(&e2, v)
         })
         .with_form("letrec", |e, mut v| {
-            let (e, mut kvs) = (Env::new(Some(e.clone())), vec(&v.pop().ok_or("empty")?));
-            while let Some(kv) = kvs.pop() {
-                e.ensure(kv.pair()?.0.symbol()?, Nil().into());
-                e.ensure(kv.pair()?.0.symbol()?, eval(&e, kv.pair()?.1.pair()?.0)?);
+            let (e2, mut kvs) = (Env::new(Some(e.clone())), vec(&v.pop().ok_or("empty")?));
+            while let Some(vk) = kvs.pop().map(|kv| (vec(&kv))) {
+                let s = vk[1].symbol()?;
+                e2.ensure(s, Nil()).ensure(s, eval(&e2, &vk[0])?);
             }
-            eval_list(&e, v)
+            eval_list(&e2, v)
         })
-        .with_form("if", |e, v| match eval(e, v[2].clone())?.bool() {
-            true => eval(e, v[1].clone()),
-            false => eval(e, v[0].clone()),
+        .with_form("if", |e, v| match eval(e, &v[2])?.bool() {
+            true => eval(e, &v[1]),
+            false => eval(e, &v[0]),
         })
         .with_form("cond", |e, mut v| loop {
             let u = vec(&v.pop().ok_or("empty")?);
-            if eval(e, u[1].clone())?.bool() {
-                return eval(e, u[0].clone());
+            if eval(e, &u[1])?.bool() {
+                return eval(e, &u[0]);
             }
         })
         .with_form("set!", |e, v| {
-            e.set(v[1].symbol()?, eval(e, v[0].clone())?)?;
+            e.set(v[1].symbol()?, eval(e, &v[0])?)?;
             Ok(Nil().into())
         })
         .with_form("set-car!", |e, v| {
-            match eval(e, v[1].clone())?.as_ref() {
-                Pair(x, _) => *x.borrow_mut() = eval(e, v[0].clone())?,
+            match eval(e, &v[1])?.as_ref() {
+                Pair(x, _) => *x.borrow_mut() = eval(e, &v[0])?,
                 _ => return Err("set-car: not pair".into()),
             };
             Ok(Nil().into())
         })
         .with_form("set-cdr!", |e, v| {
-            match eval(e, v[1].clone())?.as_ref() {
-                Pair(_, x) => *x.borrow_mut() = eval(e, v[0].clone())?,
+            match eval(e, &v[1])?.as_ref() {
+                Pair(_, y) => *y.borrow_mut() = eval(e, &v[0])?,
                 _ => return Err("set-cdr: not pair".into()),
             };
             Ok(Nil().into())
         })
-        .ensure("else", Bool(true).into())
+        .ensure("else", Bool(true))
 }
