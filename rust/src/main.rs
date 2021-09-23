@@ -47,22 +47,21 @@ enum Val {
     Nil(),
     Bool(bool),
     Int(i64),
-    Pair(RefCell<RefVal>, RefCell<RefVal>),
+    Pair(RefCell<Rc<Val>>, RefCell<Rc<Val>>),
     Symbol(String),
-    Quote(RefVal),
-    Func(Box<dyn Fn(&Rc<Env>, &RefVal) -> Result<RefVal>>),
+    Quote(Rc<Val>),
+    Func(Box<dyn Fn(&Rc<Env>, &Rc<Val>) -> Result<Rc<Val>>>),
 }
-type RefVal = Rc<Val>;
 
 use Val::*;
 impl Val {
-    fn first(&self) -> Result<RefVal> {
+    fn car(&self) -> Result<Rc<Val>> {
         Ok(self.pair()?.0)
     }
-    fn second(&self) -> Result<RefVal> {
+    fn cdr(&self) -> Result<Rc<Val>> {
         Ok(self.pair()?.1)
     }
-    fn pair(&self) -> Result<(RefVal, RefVal)> {
+    fn pair(&self) -> Result<(Rc<Val>, Rc<Val>)> {
         if let Pair(x, y) = self {
             return Ok((x.borrow().clone(), y.borrow().clone()));
         }
@@ -111,7 +110,7 @@ impl std::fmt::Display for Val {
         }
     }
 }
-fn eval(e: &Rc<Env>, v: &Val) -> Result<RefVal> {
+fn eval(e: &Rc<Env>, v: &Val) -> Result<Rc<Val>> {
     Ok(match v {
         Nil() => Nil().into(),
         Bool(x) => Bool(*x).into(),
@@ -125,61 +124,56 @@ fn eval(e: &Rc<Env>, v: &Val) -> Result<RefVal> {
         _ => return Err(format!("{}", v).into()),
     })
 }
-fn eval_list(e: &Rc<Env>, v: &Val) -> Result<RefVal> {
-    let res = eval(e, v.first()?.as_ref())?;
-    if let Nil() = v.second()?.as_ref() {
+fn eval_list(e: &Rc<Env>, v: &Val) -> Result<Rc<Val>> {
+    let res = eval(e, v.car()?.as_ref())?;
+    if let Nil() = v.cdr()?.as_ref() {
         return Ok(res);
     }
-    eval_list(e, v.second()?.as_ref())
+    eval_list(e, v.cdr()?.as_ref())
 }
 struct Env {
-    m: RefCell<HashMap<String, RefVal>>,
+    m: RefCell<HashMap<String, Rc<Val>>>,
     next: Option<Rc<Env>>,
 }
 impl Env {
-    fn lookup(&self, s: &str) -> Result<RefVal> {
+    fn lookup(&self, s: &str) -> Result<Rc<Val>> {
         match (self.m.borrow().get(s), self.next.as_ref()) {
             (Some(v), _) => Ok(Rc::clone(v)),
             (_, Some(e)) => e.lookup(s),
             _ => Err(format!("not found: {}", s).into()),
         }
     }
-    fn ensure(&self, s: &str, v: RefVal) -> &Self {
+    fn ensure(&self, s: &str, v: Rc<Val>) -> &Self {
         self.m.borrow_mut().insert(s.to_string(), v);
         self
     }
-    fn with_op1(&self, s: &str, f: fn(&RefVal) -> Result<RefVal>) -> &Self {
-        self.with_func(s, Box::new(move |e, v| f(&eval(e, v.first()?.as_ref())?)))
+    fn with_op1(&self, s: &str, f: fn(&Rc<Val>) -> Result<Rc<Val>>) -> &Self {
+        self.with_func(s, Box::new(move |e, v| f(&eval(e, v.car()?.as_ref())?)))
     }
-    fn with_op2(&self, s: &str, f: fn(&RefVal, &RefVal) -> Result<RefVal>) -> &Self {
+    fn with_op2(&self, s: &str, f: fn(&Rc<Val>, &Rc<Val>) -> Result<Rc<Val>>) -> &Self {
         self.with_func(
             s,
-            Box::new(move |e, v| {
-                f(
-                    &eval(e, v.first()?.as_ref())?,
-                    &eval(e, v.second()?.first()?.as_ref())?,
-                )
-            }),
+            Box::new(move |e, v| f(&eval(e, &*v.car()?)?, &eval(e, &*v.cdr()?.car()?)?)),
         )
     }
-    fn with_fold(&self, s: &str, f: fn(&RefVal, &RefVal) -> Result<RefVal>) -> &Self {
+    fn with_fold(&self, s: &str, f: fn(&Rc<Val>, &Rc<Val>) -> Result<Rc<Val>>) -> &Self {
         self.with_func(
             s,
             Box::new(move |e, v| {
                 let mut v = v.clone();
-                let mut acc = eval(e, v.first()?.as_ref())?;
-                while let Ok(x) = v.second()?.first() {
+                let mut acc = eval(e, v.car()?.as_ref())?;
+                while let Ok(x) = v.cdr()?.car() {
                     acc = f(&acc, &eval(e, &x)?)?;
-                    v = v.second()?;
+                    v = v.cdr()?;
                 }
                 Ok(acc)
             }),
         )
     }
-    fn with_func(&self, s: &str, f: Box<dyn Fn(&Rc<Env>, &RefVal) -> Result<RefVal>>) -> &Self {
+    fn with_func(&self, s: &str, f: Box<dyn Fn(&Rc<Env>, &Rc<Val>) -> Result<Rc<Val>>>) -> &Self {
         self.ensure(s, Func(f).into())
     }
-    fn set(&self, s: &str, v: RefVal) -> Result<()> {
+    fn set(&self, s: &str, v: Rc<Val>) -> Result<()> {
         if self.m.borrow().contains_key(s) {
             self.m.borrow_mut().insert(s.to_string(), v);
             return Ok(());
@@ -213,8 +207,8 @@ fn default_env() -> Rc<Env> {
         .with_op2("eq?", |x, y| Ok(Bool(x.eq(y)).into()))
         .with_op2("cons", |x, y| Ok(new_pair(x.clone(), y.clone()).into()))
         .with_op1("not", |x| Ok(Bool(!x.bool()).into()))
-        .with_op1("car", |x| Ok(x.first()?.clone()))
-        .with_op1("cdr", |x| Ok(x.second()?.clone()))
+        .with_op1("car", |x| Ok(x.car()?.clone()))
+        .with_op1("cdr", |x| Ok(x.cdr()?.clone()))
         .with_op1("print", |v| {
             println!("{}", v);
             Ok(Nil().into())
@@ -223,15 +217,15 @@ fn default_env() -> Rc<Env> {
         .with_func(
             "define",
             Box::new(|e, v| {
-                match v.first()?.as_ref() {
-                    Symbol(name) => e.ensure(name, eval(e, v.second()?.first()?.as_ref())?),
+                match v.car()?.as_ref() {
+                    Symbol(name) => e.ensure(name, eval(e, v.cdr()?.car()?.as_ref())?),
                     Pair(name, args) => e.ensure(
                         name.borrow().symbol()?,
                         eval(
                             e,
                             &new_pair(
                                 Symbol("lambda".into()).into(),
-                                new_pair(args.borrow().clone(), v.second()?).into(),
+                                new_pair(args.borrow().clone(), v.cdr()?).into(),
                             ),
                         )?,
                     ),
@@ -245,14 +239,14 @@ fn default_env() -> Rc<Env> {
             Box::new(|e, v| {
                 let (e, v) = (e.clone(), v.clone());
                 Ok(Func(Box::new(move |e2, v2| {
-                    let (e, mut args) = (new_frame(&e), v.first()?);
+                    let (e, mut args) = (new_frame(&e), v.car()?);
                     let mut v2 = v2.clone();
                     while let (Ok((x, n_args)), Ok((y, n_v2))) = (args.pair(), v2.pair()) {
                         e.ensure(x.symbol()?, eval(e2, y.as_ref())?);
                         args = n_args.clone();
                         v2 = n_v2;
                     }
-                    eval_list(&e, v.second()?.as_ref())
+                    eval_list(&e, v.cdr()?.as_ref())
                 }))
                 .into())
             }),
@@ -260,47 +254,44 @@ fn default_env() -> Rc<Env> {
         .with_func(
             "let",
             Box::new(|e, v| {
-                let (e2, mut kvs) = (new_frame(e), v.first()?);
+                let (e2, mut kvs) = (new_frame(e), v.car()?);
                 while let Ok((ref kv, ref n_kvs)) = kvs.pair() {
-                    e2.ensure(
-                        kv.first()?.symbol()?,
-                        eval(&e, kv.second()?.first()?.as_ref())?,
-                    );
+                    e2.ensure(kv.car()?.symbol()?, eval(&e, kv.cdr()?.car()?.as_ref())?);
                     kvs = n_kvs.clone();
                 }
-                eval_list(&e2, v.second()?.as_ref())
+                eval_list(&e2, v.cdr()?.as_ref())
             }),
         )
         .with_func(
             "let*",
             Box::new(|e, v| {
-                let (mut e, mut kvs) = (e.clone(), v.first()?);
+                let (mut e, mut kvs) = (e.clone(), v.car()?);
                 while let Ok((ref kv, n_kvs)) = kvs.pair() {
-                    let v = eval(&e, kv.second()?.first()?.as_ref())?;
+                    let v = eval(&e, kv.cdr()?.car()?.as_ref())?;
                     e = new_frame(&e);
-                    e.ensure(kv.first()?.symbol()?, v);
+                    e.ensure(kv.car()?.symbol()?, v);
                     kvs = n_kvs;
                 }
-                eval_list(&e, v.second()?.as_ref())
+                eval_list(&e, v.cdr()?.as_ref())
             }),
         )
         .with_func(
             "letrec",
             Box::new(|e, v| {
-                let (e, mut kvs) = (new_frame(e), v.first()?);
+                let (e, mut kvs) = (new_frame(e), v.car()?);
                 while let Ok((ref kv, n_kvs)) = kvs.pair() {
-                    e.ensure(kv.first()?.symbol()?, Nil().into());
-                    e.ensure(kv.first()?.symbol()?, eval(&e, &*kv.second()?.first()?)?);
+                    e.ensure(kv.car()?.symbol()?, Nil().into());
+                    e.ensure(kv.car()?.symbol()?, eval(&e, &*kv.cdr()?.car()?)?);
                     kvs = n_kvs;
                 }
-                eval_list(&e, v.second()?.as_ref())
+                eval_list(&e, v.cdr()?.as_ref())
             }),
         )
         .with_func(
             "if",
-            Box::new(|e, v| match eval(e, v.first()?.as_ref())?.bool() {
-                true => eval(e, v.second()?.first()?.as_ref()),
-                false => eval(e, v.second()?.second()?.first()?.as_ref()),
+            Box::new(|e, v| match eval(e, v.car()?.as_ref())?.bool() {
+                true => eval(e, v.cdr()?.car()?.as_ref()),
+                false => eval(e, v.cdr()?.cdr()?.car()?.as_ref()),
             }),
         )
         .with_func(
@@ -308,29 +299,26 @@ fn default_env() -> Rc<Env> {
             Box::new(|e, v| {
                 let mut v = v.clone();
                 loop {
-                    let f = v.first()?;
-                    if eval(e, f.first()?.as_ref())?.bool() {
-                        break eval(e, f.second()?.first()?.as_ref());
+                    let f = v.car()?;
+                    if eval(e, f.car()?.as_ref())?.bool() {
+                        break eval(e, f.cdr()?.car()?.as_ref());
                     }
-                    v = v.second()?;
+                    v = v.cdr()?;
                 }
             }),
         )
         .with_func(
             "set!",
             Box::new(|e, v| {
-                e.set(
-                    v.first()?.symbol()?,
-                    eval(e, v.second()?.first()?.as_ref())?,
-                )?;
+                e.set(v.car()?.symbol()?, eval(e, v.cdr()?.car()?.as_ref())?)?;
                 Ok(Nil().into())
             }),
         )
         .with_func(
             "set-car!",
             Box::new(|e, v| {
-                match eval(e, v.first()?.as_ref())?.as_ref() {
-                    Pair(x, _) => *x.borrow_mut() = eval(e, v.second()?.first()?.as_ref())?,
+                match eval(e, v.car()?.as_ref())?.as_ref() {
+                    Pair(x, _) => *x.borrow_mut() = eval(e, v.cdr()?.car()?.as_ref())?,
                     _ => return Err("set-car: not pair".into()),
                 };
                 Ok(Nil().into())
@@ -339,9 +327,9 @@ fn default_env() -> Rc<Env> {
         .with_func(
             "set-cdr!",
             Box::new(|e, v| {
-                match eval(e, v.first()?.as_ref())?.as_ref() {
-                    Pair(_, x) => *x.borrow_mut() = eval(e, v.second()?.first()?.as_ref())?,
-                    _ => return Err("set-car: not pair".into()),
+                match eval(e, v.car()?.as_ref())?.as_ref() {
+                    Pair(_, x) => *x.borrow_mut() = eval(e, v.cdr()?.car()?.as_ref())?,
+                    _ => return Err("set-cdr: not pair".into()),
                 };
                 Ok(Nil().into())
             }),
