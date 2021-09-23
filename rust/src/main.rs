@@ -112,9 +112,7 @@ impl std::fmt::Display for Val {
 }
 fn eval(e: &Rc<Env>, v: Rc<Val>) -> Result<Rc<Val>> {
     Ok(match v.as_ref() {
-        Nil() => Nil().into(),
-        Bool(x) => Bool(*x).into(),
-        Int(x) => Int(*x).into(),
+        Nil() | Bool(_) | Int(_) => v,
         Pair(x, y) => match eval(e, x.borrow().clone())?.as_ref() {
             Func(f) => f(e, y.borrow().clone())?,
             _ => return Err("not func".into()),
@@ -125,10 +123,8 @@ fn eval(e: &Rc<Env>, v: Rc<Val>) -> Result<Rc<Val>> {
     })
 }
 fn eval_list(e: &Rc<Env>, v: Vec<Rc<Val>>) -> Result<Rc<Val>> {
-    v.into_iter()
-        .map(|x| eval(e, x))
-        .last()
-        .unwrap_or(Err("empty".into()))
+    let res = v.into_iter().map(|x| eval(e, x)).last();
+    res.unwrap_or(Err("empty".into()))
 }
 struct Env {
     m: RefCell<HashMap<String, Rc<Val>>>,
