@@ -1,37 +1,31 @@
-use std::{cell, collections, env, error::Error, fs, rc::Rc};
+use std::{cell, collections, collections::VecDeque, env, error::Error, fs, rc::Rc};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn main() -> Result<()> {
     let code = fs::read_to_string(env::args().nth(1).ok_or("no file")?)? + " $";
-    eval_list(&default_env(), vec(&Parser::new(code).list()))?;
+    eval_list(&default_env(), vec(&list(&mut tokenize(code))))?;
     Ok(())
 }
-struct Parser {
-    tokens: collections::VecDeque<String>,
+fn tokenize(mut code: String) -> VecDeque<String> {
+    let cs = "()'".chars();
+    cs.for_each(|c| code = code.replace(c, &format!(" {} ", c)));
+    code.split_whitespace().map(ToOwned::to_owned).collect()
 }
-impl Parser {
-    fn new(mut code: String) -> Self {
-        let cs = "()'".chars();
-        cs.for_each(|c| code = code.replace(c, &format!(" {} ", c)));
-        let tokens = code.split_whitespace().map(ToOwned::to_owned).collect();
-        Self { tokens }
+fn list(tokens: &mut VecDeque<String>) -> V {
+    match tokens.pop_front().expect("empty") {
+        x if &x == ")" || &x == "$" => Nil().into(),
+        x => Pair(value(tokens, Some(x)).into(), list(tokens).into()).into(),
     }
-    fn list(&mut self) -> V {
-        match self.tokens.pop_front().expect("empty") {
-            x if &x == ")" || &x == "$" => Nil().into(),
-            x => Pair(self.value(Some(x)).into(), self.list().into()).into(),
-        }
-    }
-    fn value(&mut self, first: Option<String>) -> V {
-        match &*first.unwrap_or_else(|| self.tokens.pop_front().expect("empty")) {
-            "(" => self.list(),
-            "#t" => Bool(true).into(),
-            "#f" => Bool(false).into(),
-            "'" => Quote(self.value(None)).into(),
-            x => match x.parse::<i64>() {
-                Ok(i) => Int(i).into(),
-                _ => Symbol(x.into()).into(),
-            },
-        }
+}
+fn value(tokens: &mut VecDeque<String>, first: Option<String>) -> V {
+    match &*first.unwrap_or_else(|| tokens.pop_front().expect("empty")) {
+        "(" => list(tokens),
+        "#t" => Bool(true).into(),
+        "#f" => Bool(false).into(),
+        "'" => Quote(value(tokens, None)).into(),
+        x => match x.parse::<i64>() {
+            Ok(i) => Int(i).into(),
+            _ => Symbol(x.into()).into(),
+        },
     }
 }
 enum Val {
