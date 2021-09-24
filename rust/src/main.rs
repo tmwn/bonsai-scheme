@@ -213,29 +213,9 @@ fn default_env() -> Rc<Env> {
                 eval_list(&e, v.clone())
             }))))
         })
-        .with_form("let", |e, mut v| {
-            let (e2, mut kvs) = (Env::new(Some(e.clone())), vec(&v.pop().ok_or("empty")?));
-            while let Some(vk) = kvs.pop().map(|kv| (vec(&kv))) {
-                e2.ensure(vk[1].symbol()?, eval(e, &vk[0])?);
-            }
-            eval_list(&e2, v)
-        })
-        .with_form("let*", |e, mut v| {
-            let (mut e2, mut kvs) = (Env::new(Some(e.clone())), vec(&v.pop().ok_or("empty")?));
-            while let Some(vk) = kvs.pop().map(|kv| (vec(&kv))) {
-                let x = eval(&e2, &vk[0])?;
-                e2 = Env::new(Some(e2)).ensure(vk[1].symbol()?, x);
-            }
-            eval_list(&e2, v)
-        })
-        .with_form("letrec", |e, mut v| {
-            let (e2, mut kvs) = (Env::new(Some(e.clone())), vec(&v.pop().ok_or("empty")?));
-            while let Some(vk) = kvs.pop().map(|kv| (vec(&kv))) {
-                let s = vk[1].symbol()?;
-                e2.ensure(s, Nil()).ensure(s, eval(&e2, &vk[0])?);
-            }
-            eval_list(&e2, v)
-        })
+        .with_form("let", |e, v| do_let(e, v, 0))
+        .with_form("let*", |e, v| do_let(e, v, 1))
+        .with_form("letrec", |e, v| do_let(e, v, 2))
         .with_form("if", |e, v| match eval(e, &v[2])?.bool() {
             true => eval(e, &v[1]),
             false => eval(e, &v[0]),
@@ -250,19 +230,25 @@ fn default_env() -> Rc<Env> {
             e.set(v[1].symbol()?, eval(e, &v[0])?)?;
             Ok(Nil().into())
         })
-        .with_form("set-car!", |e, v| {
-            match eval(e, &v[1])?.as_ref() {
-                Pair(x, _) => *x.borrow_mut() = eval(e, &v[0])?,
-                _ => return Err("set-car: not pair".into()),
-            };
-            Ok(Nil().into())
-        })
-        .with_form("set-cdr!", |e, v| {
-            match eval(e, &v[1])?.as_ref() {
-                Pair(_, y) => *y.borrow_mut() = eval(e, &v[0])?,
-                _ => return Err("set-cdr: not pair".into()),
-            };
-            Ok(Nil().into())
-        })
+        .with_form("set-car!", |e, v| set_pair(e, v, 0))
+        .with_form("set-cdr!", |e, v| set_pair(e, v, 1))
         .ensure("else", Bool(true))
+}
+fn do_let(e: &Rc<Env>, mut v: Vec<V>, env: usize) -> Result<V> {
+    let (mut e2, mut kvs) = (Env::new(Some(e.clone())), vec(&v.pop().ok_or("empty")?));
+    while let Some(vk) = kvs.pop().map(|kv| (vec(&kv))) {
+        let e3 = match env {
+            2 => Env::new(Some(e2.clone())).ensure(vk[1].symbol()?, Nil()),
+            _ => Env::new(Some(e2.clone())),
+        };
+        e2 = e3.ensure(vk[1].symbol()?, eval([e, &e2, &e3][env], &vk[0])?);
+    }
+    eval_list(&e2, v)
+}
+fn set_pair(e: &Rc<Env>, v: Vec<V>, i: usize) -> Result<V> {
+    match eval(e, &v[1])?.as_ref() {
+        Pair(x, y) => *[x, y][i].borrow_mut() = eval(e, &v[0])?,
+        _ => return Err("set-cdr: not pair".into()),
+    };
+    Ok(Nil().into())
 }
