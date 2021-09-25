@@ -35,7 +35,8 @@ enum Val {
     Pair(cell::RefCell<V>, cell::RefCell<V>),
     Symbol(String),
     Quote(V),
-    Func(Box<dyn Fn(&Rc<Env>, Vec<V>) -> Result<V>>),
+    Func(Box<dyn Fn(Vec<V>) -> Result<V>>),
+    Form(Box<dyn Fn(&Rc<Env>, Vec<V>) -> Result<V>>),
 }
 type V = Rc<Val>;
 use Val::*;
@@ -94,6 +95,7 @@ impl std::fmt::Display for Val {
             Pair(x, y) => write!(f, "( {} {} )", x.borrow(), y.borrow()),
             Symbol(x) => write!(f, "{}", x),
             Quote(x) => write!(f, "'{}", x),
+            Form(_) => write!(f, "<form>"),
             Func(_) => write!(f, "<func>"),
         }
     }
@@ -102,7 +104,11 @@ fn eval(e: &Rc<Env>, v: &V) -> Result<V> {
     Ok(match v.as_ref() {
         Nil() | Bool(_) | Int(_) => v.clone(),
         Pair(x, y) => match eval(e, &x.borrow())?.as_ref() {
-            Func(f) => f(e, vec(&y.borrow()))?,
+            Form(f) => f(e, vec(&y.borrow()))?,
+            Func(f) => {
+                let u = vec(&y.borrow()).into_iter().map(|v| eval(e, &v));
+                f(u.collect::<Result<_>>()?)?
+            }
             x => return Err(format!("not func: {}", x).into()),
         },
         Symbol(x) => e.lookup(x)?,
@@ -131,20 +137,17 @@ impl Env {
         self.clone()
     }
     fn with_fold(self: Rc<Self>, s: &str, f: fn(V, V) -> Result<V>) -> Rc<Self> {
-        let g = move |e: &Rc<_>, v: Vec<_>| {
-            let l = v.into_iter().map(|v| eval(e, &v)).into_iter();
-            l.reduce(|x, y| f(x?, y?)).unwrap_or(Err("empty".into()))
-        };
-        self.ensure(s, Func(Box::new(g)))
+        let f = Func(Box::new(move |v| {
+            let res = v.into_iter().map(Result::Ok).reduce(|x, y| f(x?, y?));
+            res.unwrap_or(Err("empty".into()))
+        }));
+        self.ensure(s, f)
     }
-    fn with_ops(self: Rc<Self>, s: &str, f: fn(Vec<V>) -> Result<V>) -> Rc<Env> {
-        let g = move |e: &Rc<_>, v: Vec<_>| {
-            f(v.into_iter().map(|v| eval(e, &v)).collect::<Result<_>>()?)
-        };
-        self.ensure(s, Func(Box::new(g)))
+    fn with_func(self: Rc<Self>, s: &str, f: fn(Vec<V>) -> Result<V>) -> Rc<Env> {
+        self.ensure(s, Func(Box::new(f)))
     }
     fn with_form(self: Rc<Self>, s: &str, f: fn(&Rc<Env>, Vec<V>) -> Result<V>) -> Rc<Self> {
-        self.ensure(s, Func(Box::new(move |e, v| f(e, v))))
+        self.ensure(s, Form(Box::new(f)))
     }
     fn set(&self, s: &str, v: V) -> Result<()> {
         if let Some(x) = self.m.borrow_mut().get_mut(s) {
@@ -166,21 +169,21 @@ fn default_env() -> Rc<Env> {
         .with_fold("*", |x, y| Ok(Int(x.int()? * y.int()?).into()))
         .with_fold("and", |x, y| Ok(Bool(x.bool() && y.bool()).into()))
         .with_fold("or", |x, y| Ok(Bool(x.bool() || y.bool()).into()))
-        .with_ops("-", |v| Ok(Int(v[1].int()? - v[0].int()?).into()))
-        .with_ops("/", |v| Ok(Int(v[1].int()? / v[0].int()?).into()))
-        .with_ops("=", |v| Ok(Bool(v[1].int()? == v[0].int()?).into()))
-        .with_ops("<", |v| Ok(Bool(v[1].int()? < v[0].int()?).into()))
-        .with_ops("<=", |v| Ok(Bool(v[1].int()? <= v[0].int()?).into()))
-        .with_ops(">", |v| Ok(Bool(v[1].int()? > v[0].int()?).into()))
-        .with_ops(">=", |v| Ok(Bool(v[1].int()? >= v[0].int()?).into()))
-        .with_ops("eq?", |v| Ok(Bool(v[1].eq(&v[0])).into()))
-        .with_ops("cons", |v| {
+        .with_func("-", |v| Ok(Int(v[1].int()? - v[0].int()?).into()))
+        .with_func("/", |v| Ok(Int(v[1].int()? / v[0].int()?).into()))
+        .with_func("=", |v| Ok(Bool(v[1].int()? == v[0].int()?).into()))
+        .with_func("<", |v| Ok(Bool(v[1].int()? < v[0].int()?).into()))
+        .with_func("<=", |v| Ok(Bool(v[1].int()? <= v[0].int()?).into()))
+        .with_func(">", |v| Ok(Bool(v[1].int()? > v[0].int()?).into()))
+        .with_func(">=", |v| Ok(Bool(v[1].int()? >= v[0].int()?).into()))
+        .with_func("eq?", |v| Ok(Bool(v[1].eq(&v[0])).into()))
+        .with_func("cons", |v| {
             Ok(Pair(v[1].clone().into(), v[0].clone().into()).into())
         })
-        .with_ops("not", |v| Ok(Bool(!v[0].bool()).into()))
-        .with_ops("car", |v| Ok(v[0].pair()?.0))
-        .with_ops("cdr", |v| Ok(v[0].pair()?.1))
-        .with_ops("print", |v| {
+        .with_func("not", |v| Ok(Bool(!v[0].bool()).into()))
+        .with_func("car", |v| Ok(v[0].pair()?.0))
+        .with_func("cdr", |v| Ok(v[0].pair()?.1))
+        .with_func("print", |v| {
             println!("{}", v[0]);
             Ok(Nil().into())
         })
@@ -198,7 +201,7 @@ fn default_env() -> Rc<Env> {
         })
         .with_form("lambda", |e, mut v| {
             let (e, params) = (e.clone(), v.pop().ok_or("empty")?);
-            Ok(Rc::new(Func(Box::new(move |e2, mut args| {
+            Ok(Rc::new(Form(Box::new(move |e2, mut args| {
                 let (e, mut params) = (Env::new(Some(e.clone())), vec(&params));
                 while let (Some(x), Some(y)) = (params.pop(), args.pop()) {
                     e.ensure(x.symbol()?, eval(e2, &y)?);
