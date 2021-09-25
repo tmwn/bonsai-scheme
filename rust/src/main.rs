@@ -35,7 +35,7 @@ enum Val {
     Pair(cell::RefCell<V>, cell::RefCell<V>),
     Symbol(String),
     Quote(V),
-    Func(Box<dyn Fn(&Rc<Env>, V) -> Result<V>>),
+    Func(Box<dyn Fn(&Rc<Env>, Vec<V>) -> Result<V>>),
 }
 type V = Rc<Val>;
 use Val::*;
@@ -102,7 +102,7 @@ fn eval(e: &Rc<Env>, v: &V) -> Result<V> {
     Ok(match v.as_ref() {
         Nil() | Bool(_) | Int(_) => v.clone(),
         Pair(x, y) => match eval(e, &x.borrow())?.as_ref() {
-            Func(f) => f(e, y.borrow().clone())?,
+            Func(f) => f(e, vec(&y.borrow()))?,
             x => return Err(format!("not func: {}", x).into()),
         },
         Symbol(x) => e.lookup(x)?,
@@ -131,21 +131,20 @@ impl Env {
         self.clone()
     }
     fn with_fold(self: Rc<Self>, s: &str, f: fn(V, V) -> Result<V>) -> Rc<Self> {
-        let g = move |e: &Rc<Env>, v| {
-            let l = vec(&v).into_iter().map(|v| eval(e, &v)).into_iter();
+        let g = move |e: &Rc<_>, v: Vec<_>| {
+            let l = v.into_iter().map(|v| eval(e, &v)).into_iter();
             l.reduce(|x, y| f(x?, y?)).unwrap_or(Err("empty".into()))
         };
         self.ensure(s, Func(Box::new(g)))
     }
     fn with_ops(self: Rc<Self>, s: &str, f: fn(Vec<V>) -> Result<V>) -> Rc<Env> {
-        let g = move |e: &Rc<Env>, v| {
-            let l = vec(&v).into_iter().map(|v| eval(e, &v));
-            f(l.collect::<Result<_>>()?).map(Into::into)
+        let g = move |e: &Rc<_>, v: Vec<_>| {
+            f(v.into_iter().map(|v| eval(e, &v)).collect::<Result<_>>()?)
         };
         self.ensure(s, Func(Box::new(g)))
     }
     fn with_form(self: Rc<Self>, s: &str, f: fn(&Rc<Env>, Vec<V>) -> Result<V>) -> Rc<Self> {
-        self.ensure(s, Func(Box::new(move |e, v| f(e, vec(&v)))))
+        self.ensure(s, Func(Box::new(move |e, v| f(e, v))))
     }
     fn set(&self, s: &str, v: V) -> Result<()> {
         if let Some(x) = self.m.borrow_mut().get_mut(s) {
@@ -199,8 +198,8 @@ fn default_env() -> Rc<Env> {
         })
         .with_form("lambda", |e, mut v| {
             let (e, params) = (e.clone(), v.pop().ok_or("empty")?);
-            Ok(Rc::new(Func(Box::new(move |e2, v2| {
-                let (e, mut params, mut args) = (Env::new(Some(e.clone())), vec(&params), vec(&v2));
+            Ok(Rc::new(Func(Box::new(move |e2, mut args| {
+                let (e, mut params) = (Env::new(Some(e.clone())), vec(&params));
                 while let (Some(x), Some(y)) = (params.pop(), args.pop()) {
                     e.ensure(x.symbol()?, eval(e2, &y)?);
                 }
